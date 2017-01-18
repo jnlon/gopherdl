@@ -83,23 +83,27 @@ def printhelp_quit(ret):
 
     quit(ret)
 
+def mkdirs(path):
+    at = ""
+    for p in path.split(os.path.sep):
+        at = os.path.join(at, p)
+        if not os.path.exists(at):
+            os.mkdir(at)
+
+
 # TODO: Implement saving to file! Top directory should be hostname
 def savefile(content, type, host, path):
     path = path.strip("/").split("/")
-    pathfile = path[-1]
-    pathdirs = os.path.sep.join(path[:-1])
-    outdir = "."
+    outfile = os.path.join(host, os.path.sep.join(path))
 
-    # If menu, path should be same, then write to gophermap
     if type == '1': 
-        outfile = os.path.join(host, pathdirs, pathfile, "gophermap")
-    else:
-        outfile = os.path.join(host, pathdirs, pathfile)
-        # if regular content, mkdir(path[-1]), write to filename
+        outfile = os.path.join(outfile, "gophermap")
 
+    mkdirs(os.path.dirname(outfile))
     print(outfile)
 
-   # with f as open(path):
+    with open(outfile, "wb") as f:
+        f.write(content)
 
 # Return a tuple, (host,port,path)
 def spliturl(url):
@@ -132,7 +136,6 @@ def download_recursively(gurl, maxdepth, spanhosts):
         for g in gurls:
             download_recursively(g, maxdepth, spanhosts)
 
-
 optlist,args = getopt(argv[1:], "l:hrspc")
 optdict = dict(optlist)
 recursive = True if "-r" in optdict.keys() else False
@@ -142,23 +145,24 @@ helpme = True if "-h" in optdict.keys() else False
 clobber = True if "-c" in optdict.keys() else False
 hosts = args
 
-if hosts == []:
-    printhelp_quit(1)
-elif helpme:
-    printhelp_quit(0)
+def main():
 
-for host in hosts:
-    host,port,path = spliturl(host)
-    content = GopherURL("1", "", path, host, port).download().decode("us-ascii")
-    gurls = getlinks(content, host, spanhosts=spanhosts)
-    for gurl in gurls:
-        #print(gurl)
-        savefile(gurl.download(), gurl.type, gurl.host, gurl.path)
+    if hosts == []:
+        printhelp_quit(1)
+    elif helpme:
+        printhelp_quit(0)
 
-#print(download("gopher.floodgap.com", 70, path="calroads").decode("US-ASCII")).
+    for host in hosts:
+        host,port,path = spliturl(host)
+        content = GopherURL("1", "", path, host, port).download().decode("us-ascii")
+        gurls = getlinks(content, host, spanhosts=spanhosts)
+        for gurl in gurls:
+            #print(gurl)
+            savefile(gurl.download(), gurl.type, gurl.host, gurl.path)
 
+main()
+# print(download("gopher.floodgap.com", 70, path="calroads").decode("US-ASCII")).
 # Program assumes first page is a menu
-
 #for url in urls:
 #    print(url)
 
