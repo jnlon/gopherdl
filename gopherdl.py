@@ -7,6 +7,7 @@ from getopt import getopt
 from sys import argv
 from enum import Enum
 from urllib.parse import urlsplit
+import os
 
 class GopherURL():
     invalid_types = [ '7',         # Search service
@@ -32,7 +33,7 @@ class GopherURL():
             return False
         return True
 
-    def download():
+    def download(self):
         sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
         sock.connect((self.host, self.port))
         sock.send(bytes(self.path + "\n", "US-ASCII"))
@@ -83,8 +84,22 @@ def printhelp_quit(ret):
     quit(ret)
 
 # TODO: Implement saving to file! Top directory should be hostname
-def savefile(content, host, path):
-    pass
+def savefile(content, type, host, path):
+    path = path.strip("/").split("/")
+    pathfile = path[-1]
+    pathdirs = os.path.sep.join(path[:-1])
+    outdir = "."
+
+    # If menu, path should be same, then write to gophermap
+    if type == '1': 
+        outfile = os.path.join(host, pathdirs, pathfile, "gophermap")
+    else:
+        outfile = os.path.join(host, pathdirs, pathfile)
+        # if regular content, mkdir(path[-1]), write to filename
+
+    print(outfile)
+
+   # with f as open(path):
 
 # Return a tuple, (host,port,path)
 def spliturl(url):
@@ -110,7 +125,7 @@ def download_recursively(gurl, maxdepth, spanhosts):
     maxdepth = None if maxdepth is None else (maxdepth-1)
 
     content = gurl.download()
-    savefile(content, gurl.host, gurl.path) # TODO: save to gophermap?
+    savefile(content, gurl.type, gurl.host, gurl.path) # TODO: save to gophermap?
 
     if gurl.type == '1': # A gopher menu
         gurls = getlinks(content, gurl.host, spanhosts)
@@ -134,12 +149,13 @@ elif helpme:
 
 for host in hosts:
     host,port,path = spliturl(host)
-    content = download(host,port,path=path).decode("US-ASCII")
-    urls = getlinks(content, host, spanhosts=spanhosts)
-    for url in urls:
-        print(url)
+    content = GopherURL("1", "", path, host, port).download().decode("us-ascii")
+    gurls = getlinks(content, host, spanhosts=spanhosts)
+    for gurl in gurls:
+        #print(gurl)
+        savefile(gurl.download(), gurl.type, gurl.host, gurl.path)
 
-#print(download("gopher.floodgap.com", 70, path="calroads").decode("US-ASCII"))
+#print(download("gopher.floodgap.com", 70, path="calroads").decode("US-ASCII")).
 
 # Program assumes first page is a menu
 
