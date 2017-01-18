@@ -6,13 +6,13 @@ import socket
 from getopt import getopt
 from sys import argv
 from enum import Enum
+from urllib.parse import urlsplit
 
 class GopherURL():
-    invalid_types = 
-        [ '7',         # Search service
-          '2',         # CSO
-          '3',         # Error
-          '8', 'T' ]   # telnet
+    invalid_types = [ '7',         # Search service
+                      '2',         # CSO
+                      '3',         # Error
+                      '8', 'T' ]   # telnet
 
     def __init__(self, type, text, path, host, port):
         self.host = host
@@ -65,28 +65,51 @@ def getlinks(pagecontent, currenthost, spanhosts=False):
 
             urls.append(url)
         except IndexError as e:
-            print("Invalid gopher line, skipping")
+            print("Invalid line, skipping")
         except ValueError as e:
-            print("Can't convert port: ", e)
+            print("Invalid port: ", e)
 
     return urls
 
-optlist,args = getopt(argv[1:], "l:s")
+optlist,args = getopt(argv[1:], "l:sr")
 optdict = dict(optlist)
 
+recursive = True if "-r" in optdict.keys() else False
 maxdepth = 1 if not "-l" in optdict.keys() else int(optdict['-l'])
 spanhosts = True if "-s" in optdict.keys() else False
+hosts = args
 
-#print(spanhosts)
+# Return a tuple, (host,port,path)
+def spliturl(url):
+    if url[0:9] != "gopher://":
+        url = "gopher://" + url
+    up = urlsplit(url)
+    path = up.path
+    host = up.netloc
+    try:
+        s = host.split(sep=":")
+        port = int(s[1])
+        host = s[0]
+    except (ValueError, IndexError):
+        port = 70
+        host = up.netloc
+    return (host, port, path)
+
+print(args, optdict)
+
+for host in hosts:
+    host,port,path = spliturl(host)
+    #print(host, "--", port, "--", path)
+    content = download(host,port,path=path).decode("US-ASCII")
+    urls = getlinks(content, host, spanhosts=spanhosts)
+    for url in urls:
+        print(url)
 
 #print(download("gopher.floodgap.com", 70, path="calroads").decode("US-ASCII"))
 
-host = "gopher.floodgap.com"
-path="\r\n" 
+# Program assumes first page is a menu
 
-urls = getlinks(download(host, 70, path=path).decode("US-ASCII"), host, spanhosts=False)
-
-for url in urls:
-    print(url)
+#for url in urls:
+#    print(url)
 
 
