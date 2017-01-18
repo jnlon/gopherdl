@@ -32,20 +32,17 @@ class GopherURL():
             return False
         return True
 
-def download(host, port, path = ""):
-    sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
-    sock.connect((host, port))
-    sock.send(bytes(path + "\n", "US-ASCII"))
-    buffer = bytearray()
-    data = False
-    while data != b'':
-        data = sock.recv(2048)
-        buffer.extend(data)
-    sock.close()
-    return buffer
-
-# Args: -l <depth>
-# 
+    def download():
+        sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
+        sock.connect((self.host, self.port))
+        sock.send(bytes(self.path + "\n", "US-ASCII"))
+        buffer = bytearray()
+        data = None
+        while data != b'':
+            data = sock.recv(2048)
+            buffer.extend(data)
+        sock.close()
+        return buffer
 
 def getlinks(pagecontent, currenthost, spanhosts=False):
     urls = []
@@ -71,13 +68,23 @@ def getlinks(pagecontent, currenthost, spanhosts=False):
 
     return urls
 
-optlist,args = getopt(argv[1:], "l:sr")
-optdict = dict(optlist)
+def printhelp_quit(ret):
+    print("Usage: gopherdl.py [options] [url1 url2 ...]")
+    print("Options:")
+    helpdoc = { "-h" : "Show this help",
+                "-r" : "Enable recursive downloads" ,
+                "-l [depth]" : "Maximum depth in recursive downloads (default infinite)",
+                "-s" : "Span hosts on recursive downloads",
+                "-p" : "Allow ascension to the parent directories",
+                "-c" : "Enable file clobbering" } 
+    for (key,value) in helpdoc.items():
+        print(" ",key,value)
 
-recursive = True if "-r" in optdict.keys() else False
-maxdepth = 1 if not "-l" in optdict.keys() else int(optdict['-l'])
-spanhosts = True if "-s" in optdict.keys() else False
-hosts = args
+    quit(ret)
+
+# TODO: Implement saving to file! Top directory should be hostname
+def savefile(content, host, path):
+    pass
 
 # Return a tuple, (host,port,path)
 def spliturl(url):
@@ -95,11 +102,38 @@ def spliturl(url):
         host = up.netloc
     return (host, port, path)
 
-print(args, optdict)
+def download_recursively(gurl, maxdepth, spanhosts):
+
+    if maxdepth == 0:
+        return
+
+    maxdepth = None if maxdepth is None else (maxdepth-1)
+
+    content = gurl.download()
+    savefile(content, gurl.host, gurl.path) # TODO: save to gophermap?
+
+    if gurl.type == '1': # A gopher menu
+        gurls = getlinks(content, gurl.host, spanhosts)
+        for g in gurls:
+            download_recursively(g, maxdepth, spanhosts)
+
+
+optlist,args = getopt(argv[1:], "l:hrspc")
+optdict = dict(optlist)
+recursive = True if "-r" in optdict.keys() else False
+maxdepth = 1 if not "-l" in optdict.keys() else int(optdict['-l'])
+spanhosts = True if "-s" in optdict.keys() else False
+helpme = True if "-h" in optdict.keys() else False
+clobber = True if "-c" in optdict.keys() else False
+hosts = args
+
+if hosts == []:
+    printhelp_quit(1)
+elif helpme:
+    printhelp_quit(0)
 
 for host in hosts:
     host,port,path = spliturl(host)
-    #print(host, "--", port, "--", path)
     content = download(host,port,path=path).decode("US-ASCII")
     urls = getlinks(content, host, spanhosts=spanhosts)
     for url in urls:
