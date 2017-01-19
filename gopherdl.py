@@ -3,7 +3,7 @@
 # A Recursive Downloader of Gopher Menus
 
 import socket
-from getopt import getopt
+from getopt import getopt,GetoptError
 from sys import argv
 from enum import Enum
 from urllib.parse import urlsplit
@@ -150,17 +150,23 @@ def download_recursively(gurl, depthleft, config):
         for g in gurls:
             download_recursively(g, depthleft, config)
 
-optlist,args = getopt(argv[1:], "l:hrspc")
-optdict = dict(optlist)
-config = Config(optdict)
-hosts = args
-
 def main():
 
-    if hosts == []:
+    optlist,args = [],[] 
+
+    try:
+        optlist,args = getopt(argv[1:], "l:hrspc")
+    except GetoptError: 
         printhelp_quit(1)
-    elif config.helpme:
+
+    optdict = dict(optlist)
+    config = Config(optdict)
+    hosts = args
+
+    if config.helpme:
         printhelp_quit(0)
+    elif hosts == []:
+        printhelp_quit(1)
 
     for host in hosts:
         host,port,path = spliturl(host)
