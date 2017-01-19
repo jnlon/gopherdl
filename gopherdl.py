@@ -9,6 +9,14 @@ from enum import Enum
 from urllib.parse import urlsplit
 import os
 
+class Config():
+    def __init__(self, optdict):
+        self.recursive = True if "-r" in optdict.keys() else False
+        self.maxdepth = 1 if not "-l" in optdict.keys() else int(optdict['-l'])
+        self.spanhosts = True if "-s" in optdict.keys() else False
+        self.helpme = True if "-h" in optdict.keys() else False
+        self.clobber = True if "-c" in optdict.keys() else False
+
 class GopherURL():
     invalid_types = [ '7',         # Search service
                       '2',         # CSO
@@ -63,9 +71,11 @@ def getlinks(pagecontent, currenthost, spanhosts=False):
 
             urls.append(url)
         except IndexError as e:
-            print("Invalid line, skipping")
+            pass
+            #print("Invalid line, skipping")
         except ValueError as e:
-            print("Invalid port: ", e)
+            pass
+            #print("Invalid port: ", e)
 
     return urls
 
@@ -91,19 +101,23 @@ def mkdirs(path):
             os.mkdir(at)
 
 
-# TODO: Implement saving to file! Top directory should be hostname
-def savefile(content, type, host, path):
-    path = path.strip("/").split("/")
-    outfile = os.path.join(host, os.path.sep.join(path))
+def savefile(gurl, clobber):
+    path = gurl.path.strip("/").split("/")
+    outfile = os.path.join(gurl.host, os.path.sep.join(path))
 
-    if type == '1': 
+    if gurl.type == '1': 
         outfile = os.path.join(outfile, "gophermap")
 
     mkdirs(os.path.dirname(outfile))
+
     print(outfile)
 
+    # If it exists and we can't clobber, leave
+    if os.path.exists(outfile) and not clobber:
+        return
+
     with open(outfile, "wb") as f:
-        f.write(content)
+        f.write(gurl.download())
 
 # Return a tuple, (host,port,path)
 def spliturl(url):
@@ -121,44 +135,46 @@ def spliturl(url):
         host = up.netloc
     return (host, port, path)
 
-def download_recursively(gurl, maxdepth, spanhosts):
+def download_recursively(gurl, depthleft, config):
 
-    if maxdepth == 0:
+    if depthleft == 0:
         return
 
-    maxdepth = None if maxdepth is None else (maxdepth-1)
+    depthleft = None if depthleft is None else (depthleft-1)
 
     content = gurl.download()
-    savefile(content, gurl.type, gurl.host, gurl.path) # TODO: save to gophermap?
+    savefile(gurl, config.clobber)
 
     if gurl.type == '1': # A gopher menu
-        gurls = getlinks(content, gurl.host, spanhosts)
+        gurls = getlinks(content.decode("us-ascii"), gurl.host, config.spanhosts)
         for g in gurls:
-            download_recursively(g, maxdepth, spanhosts)
+            download_recursively(g, depthleft, config)
 
 optlist,args = getopt(argv[1:], "l:hrspc")
 optdict = dict(optlist)
-recursive = True if "-r" in optdict.keys() else False
-maxdepth = 1 if not "-l" in optdict.keys() else int(optdict['-l'])
-spanhosts = True if "-s" in optdict.keys() else False
-helpme = True if "-h" in optdict.keys() else False
-clobber = True if "-c" in optdict.keys() else False
+config = Config(optdict)
 hosts = args
 
 def main():
 
     if hosts == []:
         printhelp_quit(1)
-    elif helpme:
+    elif config.helpme:
         printhelp_quit(0)
 
     for host in hosts:
         host,port,path = spliturl(host)
-        content = GopherURL("1", "", path, host, port).download().decode("us-ascii")
-        gurls = getlinks(content, host, spanhosts=spanhosts)
-        for gurl in gurls:
-            #print(gurl)
-            savefile(gurl.download(), gurl.type, gurl.host, gurl.path)
+        rootgurl = GopherURL("1", "", path, host, port)
+
+        if config.recursive:
+            download_recursively(rootgurl, config.maxdepth, config)
+        else:
+            content = rootgurl.download()
+            savefile(rootgurl, config.clobber)
+
+        #for gurl in gurls:
+        #    #print(gurl)
+        #    savefile(gurl.download(), gurl.type, gurl.host, gurl.path)
 
 main()
 # print(download("gopher.floodgap.com", 70, path="calroads").decode("US-ASCII")).
