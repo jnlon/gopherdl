@@ -138,17 +138,25 @@ def spliturl(url):
 def download_recursively(gurl, depthleft, config):
 
     if depthleft == 0:
-        return
+        return []
 
     depthleft = None if depthleft is None else (depthleft-1)
 
-    content = gurl.download()
-    savefile(gurl, config.clobber)
+    #content = gurl.download()
+    #savefile(gurl, config.clobber)
 
     if gurl.type == '1': # A gopher menu
-        gurls = getlinks(content.decode("us-ascii"), gurl.host, config.spanhosts)
+        content = gurl.download()
+        gurls = getlinks(content.decode("utf-8"), gurl.host, config.spanhosts)
+        #print(gurls)
         for g in gurls:
-            download_recursively(g, depthleft, config)
+            print(g)
+            gurls.extend(download_recursively(g, depthleft, config))
+        return gurls
+    else:
+        return []
+        #for g in gurls:
+        #    return download_recursively(g, depthleft, config)
 
 def main():
 
@@ -173,7 +181,9 @@ def main():
         rootgurl = GopherURL("1", "", path, host, port)
 
         if config.recursive:
-            download_recursively(rootgurl, config.maxdepth, config)
+            tree = download_recursively(rootgurl, config.maxdepth, config)
+            for g in tree:
+                print(g.path)
         else:
             content = rootgurl.download()
             savefile(rootgurl, config.clobber)
