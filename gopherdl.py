@@ -11,11 +11,40 @@ import os
 
 class Config():
     def __init__(self, optdict):
-        self.recursive = True if "-r" in optdict.keys() else False
-        self.maxdepth = 1 if not "-l" in optdict.keys() else int(optdict['-l'])
-        self.spanhosts = True if "-s" in optdict.keys() else False
-        self.helpme = True if "-h" in optdict.keys() else False
-        self.clobber = True if "-c" in optdict.keys() else False
+        flags = optdict.keys()
+        self.recursive = True if '-r' in flags else False
+        self.maxdepth = 1 if not '-l' in flags else int(optdict['-l'])
+        self.spanhosts = True if '-s' in flags else False
+        self.helpme = True if '-h' in flags else False
+        self.clobber = True if '-c' in flags else False
+        self.onlymenu = False if '-m' in flags else True
+        self.debug = True if '-d' in flags else False
+
+    def __str__(self):
+        l = [ "\n  recursive = {}".format(self.recursive),
+              "  maxdepth = {}".format(self.maxdepth),
+              "  spanhosts = {}".format(self.spanhosts),
+              "  helpme = {}".format(self.helpme),
+              "  clobber = {}".format(self.clobber),
+              "  onlymenu = {}".format(self.onlymenu),
+              "  debug = {}".format(self.debug) ]
+        return "\n".join(l)
+
+    def print_options():
+        helpdoc = { "-r" : "Enable recursive downloads" ,
+                    "-l [depth]" : "Maximum depth in recursive downloads (default infinite)",
+                    "-s" : "Span hosts on recursive downloads",
+                    "-h" : "Show this help",
+                    "-p" : "Allow ascension to the parent directories",
+                    "-m" : "Only download gopher menus",
+                    "-c" : "Enable file clobbering",
+                    "-d" : "Enable debug messages"} 
+        for (key,value) in helpdoc.items():
+            print("  {} {}".format(key,value))
+
+def debug(msg, config):
+    if config.debug:
+        print("debug: {}".format(msg))
 
 class GopherURL():
     invalid_types = [ '7',         # Search service
@@ -53,7 +82,7 @@ class GopherURL():
         sock.close()
         return buffer
 
-def getlinks(pagecontent, currenthost, spanhosts=False):
+def getlinks(pagecontent, currenthost, spanhosts):
     urls = []
     for line in pagecontent.split(sep='\n'):
         tokens = line.strip().split(sep='\t')
@@ -82,15 +111,7 @@ def getlinks(pagecontent, currenthost, spanhosts=False):
 def printhelp_quit(ret):
     print("Usage: gopherdl.py [options] [url1 url2 ...]")
     print("Options:")
-    helpdoc = { "-h" : "Show this help",
-                "-r" : "Enable recursive downloads" ,
-                "-l [depth]" : "Maximum depth in recursive downloads (default infinite)",
-                "-s" : "Span hosts on recursive downloads",
-                "-p" : "Allow ascension to the parent directories",
-                "-c" : "Enable file clobbering" } 
-    for (key,value) in helpdoc.items():
-        print(" ",key,value)
-
+    Config.print_options()
     quit(ret)
 
 def mkdirs(path):
@@ -101,7 +122,8 @@ def mkdirs(path):
             os.mkdir(at)
 
 
-def savefile(gurl, clobber):
+def write_gopherurl(gurl, config):
+    debug("write_gopherurl: {}".format(gurl), config)
     path = gurl.path.strip("/").split("/")
     outfile = os.path.join(gurl.host, os.path.sep.join(path))
 
@@ -110,12 +132,13 @@ def savefile(gurl, clobber):
 
     mkdirs(os.path.dirname(outfile))
 
-    print(outfile)
 
     # If it exists and we can't clobber, leave
-    if os.path.exists(outfile) and not clobber:
+    if os.path.exists(outfile) and not config.clobber:
+        print("Not overwriting:", outfile)
         return
 
+    print("Writing:", outfile)
     with open(outfile, "wb") as f:
         f.write(gurl.download())
 
@@ -135,41 +158,48 @@ def spliturl(url):
         host = up.netloc
     return (host, port, path)
 
-def download_recursively(gurl, depthleft, config):
+def crawl_recursively(gurl, depthleft, config):
 
     if depthleft == 0:
         return []
 
     depthleft = None if depthleft is None else (depthleft-1)
 
-    #content = gurl.download()
-    #savefile(gurl, config.clobber)
+    # write_gopherurl(gurl, config.clobber)
 
     if gurl.type == '1': # A gopher menu
         content = gurl.download()
         gurls = getlinks(content.decode("utf-8"), gurl.host, config.spanhosts)
-        #print(gurls)
+
+        # To Avoid duplicate downloads, lets download and 
+        # save this menu
+
+        write_gopherurl(gurl, config)
+        
         for g in gurls:
-            print(g)
-            gurls.extend(download_recursively(g, depthleft, config))
+            debug(g, config)
+            gurls.extend(crawl_recursively(g, depthleft, config))
         return gurls
-    else:
-        return []
-        #for g in gurls:
-        #    return download_recursively(g, depthleft, config)
+    else: # This is file content
+        if gurl.onlymenu: 
+            return []
+        else: 
+            return [gurl]
 
 def main():
 
     optlist,args = [],[] 
 
     try:
-        optlist,args = getopt(argv[1:], "l:hrspc")
+        optlist,args = getopt(argv[1:], "l:hrspcdm")
     except GetoptError: 
         printhelp_quit(1)
 
     optdict = dict(optlist)
     config = Config(optdict)
     hosts = args
+
+    debug("config: {}".format(config), config)
 
     if config.helpme:
         printhelp_quit(0)
@@ -178,15 +208,17 @@ def main():
 
     for host in hosts:
         host,port,path = spliturl(host)
-        rootgurl = GopherURL("1", "", path, host, port)
+        rootgurl = GopherURL("1", "", path, host, port) ## TODO: Detect whether file or gophermenu?
 
         if config.recursive:
-            tree = download_recursively(rootgurl, config.maxdepth, config)
+            print("Recursively downloading to maximum depth {}".format(config.maxdepth))
+            print("Recursively downloading to maximum depth {}".format(config.maxdepth))
+            tree = crawl_recursively(rootgurl, config.maxdepth, config)
             for g in tree:
-                print(g.path)
-        else:
+                write_gopherurl(g, config)
+        else: # Single file download
             content = rootgurl.download()
-            savefile(rootgurl, config.clobber)
+            write_gopherurl(rootgurl, config)
 
         #for gurl in gurls:
         #    #print(gurl)
