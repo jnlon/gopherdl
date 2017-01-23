@@ -167,7 +167,7 @@ def spliturl(url):
 
     # They specified an incompatible protocol
     if has_scheme and not has_gopher_scheme:
-        except ValueError
+        raise ValueError
 
     # Assume they meant gopher, give it an empty scheme
     if not has_scheme:
@@ -229,7 +229,7 @@ def main():
         print_help_quit(1)
 
     for host in hosts:
-        try
+        try:
             host,port,path = spliturl(host)
             root_gurl_type = "1" if config.recursive else "0"
             rootgurl = GopherURL(root_gurl_type, "[ROOT URL]", path, host, port)
