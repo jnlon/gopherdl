@@ -11,7 +11,7 @@ import os
 
 class Config():
 
-    getopt_spec = "l:hrspcdm:w"
+    getopt_spec = "l:w:hrspcdm"
 
     def __init__(self, optdict):
         # Commandline options
@@ -21,7 +21,7 @@ class Config():
         self.spanhosts = True if '-s' in flags else False
         self.helpme = True if '-h' in flags else False
         self.clobber = True if '-c' in flags else False
-        self.only_menu = False if '-m' in flags else True
+        self.only_menu = True if '-m' in flags else False
         self.ascend_parents = False if not '-p' in flags else True
         self.delay = 0.0 if not '-w' in flags else int(optdict['-w'])
         self.debug = True if '-d' in flags else False
@@ -109,11 +109,11 @@ def getlinks(pagecontent, config, roothost, rootpath):
             port = int(tokens[3].strip())
 
             if not config.spanhosts and host != roothost:
-                debug("Not spanning host: {} != {}".format(host, roothost), config.debug)
+                debug("Not spanning host: {} != {}".format(host, roothost), config)
                 continue
 
             if not config.ascend_parents and not rootpath in path:
-                debug("Not ascending parents: {} not in {}".format(rootpath, path), config.debug)
+                debug("Not ascending parents: {} not in {}".format(rootpath, path), config)
                 continue
 
             url = GopherURL(type, text, path, host, port)
@@ -124,9 +124,9 @@ def getlinks(pagecontent, config, roothost, rootpath):
             urls.append(url)
 
         except IndexError:
-            debug("Invalid line (IndexError)", config.debug)
+            debug("Invalid line (IndexError)", config)
         except ValueError as e:
-            debug("Invalid Port: {}".format(e), config.debug)
+            debug("Invalid Port: {}".format(e), config)
 
     return urls
 
@@ -188,7 +188,7 @@ def spliturl(urlstr):
 
 # Returns a list of valid gopher URLS pointing to content
 # Menus are saved to files to prevent duplicate downloads
-def crawl_recursively(gurl, depthleft, config, rootgurl):
+def crawl_recursively(gurl, depthleft, config, rootgurl, path_history):
 
     if depthleft == 0:
         return []
@@ -204,11 +204,12 @@ def crawl_recursively(gurl, depthleft, config, rootgurl):
 
         for next_gurl in next_gurls:
             debug(next_gurl, config)
-            next_gurls.extend(crawl_recursively(next_gurl, depthleft, config, rootgurl))
+            if next_gurl.path in path_history:
+                continue
+            path_history.append(next_gurl.path)
+            next_gurls.extend(crawl_recursively(next_gurl, depthleft, config, rootgurl, path_history))
 
         return next_gurls
-    elif gurl.only_menu:
-        return []
     else:
         return [gurl]
 
@@ -239,9 +240,12 @@ def main():
             rootgurl = GopherURL(root_gurl_type, "[ROOT URL]", path, host, port)
 
             if config.recursive:
-                gopher_urls = crawl_recursively(rootgurl, config.maxdepth, config, rootgurl)
-                for gurl in gopher_urls:
-                    write_gopherurl(gurl, config)
+                gopher_urls = crawl_recursively(rootgurl, config.maxdepth, config, rootgurl, [path])
+
+                if not config.only_menu:
+                    for gurl in gopher_urls:
+                        write_gopherurl(gurl, config)
+
             # Single file download
             else:
                 write_gopherurl(rootgurl, config)
