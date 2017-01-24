@@ -23,7 +23,7 @@ class Config():
         self.clobber = True if '-c' in flags else False
         self.only_menu = True if '-m' in flags else False
         self.ascend_parents = False if not '-p' in flags else True
-        self.delay = 0.0 if not '-w' in flags else int(optdict['-w'])
+        self.delay = 0.0 if not '-w' in flags else float(optdict['-w'])
         self.debug = True if '-d' in flags else False
 
     def __str__(self):
@@ -88,7 +88,7 @@ class GopherURL():
         time.sleep(delay)
         sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
         sock.connect((self.host, self.port))
-        sock.send(bytes(self.path + "\n", "US-ASCII"))
+        sock.send(bytes(self.path + "\r\n", "US-ASCII"))
         buffer = bytearray()
         data = None
         while data != b'':
@@ -108,7 +108,7 @@ def getlinks(pagecontent, config, roothost, rootpath):
             host = tokens[2].strip()
             port = int(tokens[3].strip())
 
-            if not config.spanhosts and host != roothost:
+            if config.spanhosts and host != roothost:
                 debug("Not spanning host: {} != {}".format(host, roothost), config)
                 continue
 
@@ -190,6 +190,9 @@ def spliturl(urlstr):
 # Menus are saved to files to prevent duplicate downloads
 def crawl_recursively(gurl, depthleft, config, rootgurl, path_history):
 
+    if gurl.path in path_history:
+        return []
+
     if depthleft == 0:
         return []
 
@@ -198,9 +201,10 @@ def crawl_recursively(gurl, depthleft, config, rootgurl, path_history):
     # A gopher menu
     if gurl.type == '1':
         content = gurl.download(config.delay)
-        next_gurls = getlinks(content.decode("utf-8"), config, rootgurl.host, rootgurl.path)
+        next_gurls = getlinks(content.decode("utf-8", errors="ignore"), config, rootgurl.host, rootgurl.path)
         # To Avoid duplicate downloads, pass this menu to save
         write_gopherurl(gurl, config, content = content)
+        path_history.append(gurl.path)
 
         for next_gurl in next_gurls:
             debug(next_gurl, config)
@@ -240,7 +244,7 @@ def main():
             rootgurl = GopherURL(root_gurl_type, "[ROOT URL]", path, host, port)
 
             if config.recursive:
-                gopher_urls = crawl_recursively(rootgurl, config.maxdepth, config, rootgurl, [path])
+                gopher_urls = crawl_recursively(rootgurl, config.maxdepth, config, rootgurl, [])
 
                 if not config.only_menu:
                     for gurl in gopher_urls:
@@ -249,7 +253,7 @@ def main():
             # Single file download
             else:
                 write_gopherurl(rootgurl, config)
-        except ValueError:
-            print("Invalid Host:", host)
+        except ValueError as e:
+            print(e)
 
 main()
