@@ -17,7 +17,7 @@ class Config():
         # Commandline options
         flags = optdict.keys()
         self.recursive = True if '-r' in flags else False
-        self.maxdepth = None if not '-l' in flags else int(optdict['-l'])
+        self.maxdepth = 0 if not '-l' in flags else int(optdict['-l'])
         self.spanhosts = True if '-s' in flags else False
         self.helpme = True if '-h' in flags else False
         self.clobber = True if '-c' in flags else False
@@ -184,7 +184,7 @@ def spliturl(urlstr):
 
 # Returns a list of valid gopher URLS pointing to content
 # Menus are saved to files to prevent duplicate downloads
-def crawl_recursively(gurl, depthleft, config, rootgurl):
+def crawl_recursively(gurl, depth, config, rootgurl, prev_paths):
 
     def filter_links(link):
         # Remove if not spanhost and different host
@@ -198,20 +198,27 @@ def crawl_recursively(gurl, depthleft, config, rootgurl):
 
         return True
 
-    if depthleft == 0:
+    # Gone too deep
+    if config.maxdepth != 0 and depth == config.maxdepth:
         return []
+
+    # Been to this menu before
+    if gurl.path in prev_paths:
+        return []
+
+    prev_paths.append(gurl.path)
 
     links = []
 
     debug(gurl, config)
 
     if gurl.type == '1': # If a menu
-        print("[{}] {}".format((config.maxdepth - depthleft), gurl.to_url_path()))
+        print("[{}] {}".format(depth, gurl.to_url_path()))
         content = gurl.download(config.delay)
         write_gopherurl(gurl, config, content=content)
         next_gurls = filter(filter_links, getlinks(content.decode('utf-8', errors='ignore'), config))
         for next_gurl in next_gurls:
-            links.extend(crawl_recursively(next_gurl, (depthleft-1), config, rootgurl))
+            links.extend(crawl_recursively(next_gurl, (depth+1), config, rootgurl, prev_paths))
     else: # If a regular file
         links = [gurl]
 
@@ -252,9 +259,9 @@ def main():
 
             if config.recursive:
                 print(":: Downloading menu tree")
-                gopher_urls = crawl_recursively(rootgurl, config.maxdepth, config, rootgurl)
+                gopher_urls = crawl_recursively(rootgurl, 0, config, rootgurl, [])
 
-                if not config.only_menu:
+                if not config.only_menu and len(gopher_urls) > 0:
                     print(":: Downloading {} files".format(len(gopher_urls)))
                     for gurl in gopher_urls:
                         print(gurl.to_file_path())
