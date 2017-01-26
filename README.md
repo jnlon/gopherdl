@@ -1,15 +1,34 @@
 # gopherdl
 
-So, it's 2017, and as far as I can tell, NO ONE has written (and made public) a
-wget-like program for recursively downloading gopher menus and files. 
+`gopherdl` is a Python3 program for downloading files and menus over the gopher
+protocol. It is similar to wget in terms of commandline options and basic
+features. 
 
-Maybe it's just really hard to find ANYTHING related to gopher at this point?
+## Usage Examples
 
-But, it's not a dead protocol I tell you! Gophers tunnel on, [even
-today](gopher://gopher.floogdap.com)!
+Download the index page of gopher.floodgap.com:
 
-### Get to the point already
+`./gopherdl.py gopher.floodgap.com`
 
-`gopherdl` is a Python3 program intended to mirror wget in terms of commandline
-options and basic features. It's not finished yet, but the basic goal is to be
-able to recursively entire gopher sites and menus.
+Recursively download all files and menus on gopher.floodgap.com:
+
+`./gopherdl.py -r gopher.floodgap.com`
+
+Recursively download just menus on gopher.floodgap.com:
+
+`./gopherdl.py -r -m gopher.floodgap.com`
+
+etc
+
+To see a list of options, run
+
+`./gopherdl.py -h`
+
+
+## Why
+
+It takes forever to manually traverse every menu on a large gopher server, so
+hopefully this tool will make content discovery easier.
+
+And, to my surprise, there doesn't seem to exist a wget-equivalent for the
+gopher protocol, how strange! Hopefully gopherdl fills the gap.
