@@ -87,7 +87,7 @@ class GopherURL():
         time.sleep(delay)
         sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
         sock.connect((self.host, self.port))
-        sock.send(bytes(self.path + "\r\n", "US-ASCII"))
+        sock.send(bytes(self.path + "\r\n", "utf-8"))
         buffer = bytearray()
         data = None
         while data != b'':
