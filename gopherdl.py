@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# A Recursive Downloader of Gopher Menus
+# gopherdl.py
 
 from getopt import getopt, GetoptError
 from urllib.parse import urlsplit
@@ -45,7 +45,7 @@ def print_options():
                "-l [depth]" : "Maximum depth in recursive downloads (default none)",
                "-s" : "Span hosts on recursive downloads",
                "-h" : "Show this help",
-               "-c" : "Enable file clobbering",
+               "-c" : "Enable file clobbering (overwrite existing)",
                "-m" : "Only download gopher menus",
                "-p" : "Allow ascension to the parent directories",
                "-w [seconds]" : "Delay between downloads",
@@ -189,7 +189,11 @@ def crawl_recursively(gurl, depthleft, config, rootgurl):
     def filter_links(link):
         # Remove if not spanhost and different host
         if not config.spanhosts and rootgurl.host != link.host:
-            debug("Not spanning: {} != {}".format(rootgurl.host, link.host))
+            debug("Not spanning: {} != {}".format(rootgurl.host, link.host), config)
+            return False
+
+        if not config.ascend_parents and not link.path.startswith(rootgurl.path):
+            debug("Not Ascending: {} <-> {}".format(rootgurl.path, link.path), config)
             return False
 
         return True
@@ -235,9 +239,16 @@ def main():
 
     for host in hosts:
         try:
+
+            # No file extension, ends in a slash
+            def probably_a_menu(path):
+                end = path.split("/")[-1]
+                return not "." in end or path[-1] == '/'
+
             host, port, path = spliturl(host)
-            root_gurl_type = "1" if config.recursive else "0"
+            root_gurl_type = "1" if probably_a_menu(path) else "0"
             rootgurl = GopherURL(root_gurl_type, "[ROOT URL]", path, host, port)
+            debug("rootgurl: {}".format(rootgurl), config)
 
             if config.recursive:
                 print(":: Downloading menu tree")
@@ -251,6 +262,8 @@ def main():
 
             # Single file download
             else:
+                print(":: Downloading single file ")
+                print(rootgurl.to_file_path())
                 write_gopherurl(rootgurl, config)
         except ValueError as e:
             print(e)
