@@ -146,6 +146,10 @@ def mkdirs(path):
         if not os.path.exists(at):
             os.mkdir(at)
 
+def slurp(path):
+    with open(path, "rb") as f:
+        return f.read()
+
 def write_gopherurl(gurl, config, content=None):
     debug("write_gopherurl: {}".format(gurl), config)
     outfile = gurl.to_file_path()
@@ -176,7 +180,7 @@ def spliturl(urlstr):
         urlstr = "//{}".format(urlstr)
 
     url = urlsplit(urlstr)
-    path = url.path
+    path = "/" if len(url.path) == 0 else url.path
     host = url.netloc
     port = 70 if url.port is None else url.port
 
@@ -214,7 +218,15 @@ def crawl_recursively(gurl, depth, config, rootgurl, prev_paths):
 
     if gurl.type == '1': # If a menu
         print("[{}] {}".format(depth, gurl.to_url_path()))
-        content = gurl.download(config.delay)
+
+        content = None
+        path = gurl.to_file_path()
+        if os.path.exists(path) and not config.clobber:
+            print(":: Using existing menu")
+            content = slurp(path)
+        else:
+            content = gurl.download(config.delay)
+
         write_gopherurl(gurl, config, content=content)
         next_gurls = filter(filter_links, getlinks(content.decode('utf-8', errors='ignore'), config))
         for next_gurl in next_gurls:
@@ -246,8 +258,7 @@ def main():
 
     for host in hosts:
         try:
-
-            # No file extension, ends in a slash
+            # probably a menu if there's no file extension or ends in /
             def probably_a_menu(path):
                 end = path.split("/")[-1]
                 return not "." in end or path[-1] == '/'
