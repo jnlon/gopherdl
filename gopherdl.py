@@ -17,7 +17,7 @@ class Config():
         # Commandline options
         flags = optdict.keys()
         self.recursive = True if '-r' in flags else False
-        self.maxdepth = 8 if not '-l' in flags else int(optdict['-l'])
+        self.maxdepth = None if not '-l' in flags else int(optdict['-l'])
         self.spanhosts = True if '-s' in flags else False
         self.helpme = True if '-h' in flags else False
         self.clobber = True if '-c' in flags else False
@@ -42,7 +42,7 @@ class Config():
 
 def print_options():
     helpdoc = {"-r" : "Enable recursive downloads",
-               "-l [depth]" : "Maximum depth in recursive downloads (default 8)",
+               "-l [depth]" : "Maximum depth in recursive downloads (default none)",
                "-s" : "Span hosts on recursive downloads",
                "-h" : "Show this help",
                "-c" : "Enable file clobbering",
@@ -73,9 +73,8 @@ class GopherURL():
         self.type = type
 
     def __str__(self):
-        string = "<GopherURL ({})({})({})({})({})>".format(
-                 self.type, self.text, self.host, self.path, self.port)
-        return string
+        s = "<GopherURL ({})({})({})({})({})>"
+        return s.format(self.type, self.text, self.host, self.path, self.port)
 
     def valid(self):
         if len(self.path) == 0:
@@ -97,7 +96,19 @@ class GopherURL():
         sock.close()
         return buffer
 
-def getlinks(pagecontent, config, roothost, rootpath):
+    # path without adding gophermap
+    def to_url_path(self):
+        path = self.path.strip("/").split("/")
+        outfile = os.path.join(self.host, os.path.sep.join(path))
+        return outfile
+
+    def to_file_path(self):
+        outfile = self.to_url_path()
+        if self.type == '1':
+            outfile = os.path.join(outfile, "gophermap")
+        return outfile
+
+def getlinks(pagecontent, config):
     urls = []
     for line in pagecontent.split(sep='\n'):
         tokens = line.strip().split(sep='\t')
@@ -107,14 +118,6 @@ def getlinks(pagecontent, config, roothost, rootpath):
             path = tokens[1].strip()
             host = tokens[2].strip()
             port = int(tokens[3].strip())
-
-            if config.spanhosts and host != roothost:
-                debug("Not spanning host: {} != {}".format(host, roothost), config)
-                continue
-
-            if not config.ascend_parents and not rootpath in path:
-                debug("Not ascending parents: {} not in {}".format(rootpath, path), config)
-                continue
 
             url = GopherURL(type, text, path, host, port)
 
@@ -143,22 +146,15 @@ def mkdirs(path):
         if not os.path.exists(at):
             os.mkdir(at)
 
-def write_gopherurl(gurl, config, content = None):
+def write_gopherurl(gurl, config, content=None):
     debug("write_gopherurl: {}".format(gurl), config)
-    path = gurl.path.strip("/").split("/")
-    outfile = os.path.join(gurl.host, os.path.sep.join(path))
-
-    if gurl.type == '1':
-        outfile = os.path.join(outfile, "gophermap")
-
+    outfile = gurl.to_file_path()
     mkdirs(os.path.dirname(outfile))
 
     # If it exists and we can't clobber, leave
     if os.path.exists(outfile) and not config.clobber:
         print("Not overwriting:", outfile)
         return
-
-    print("Writing:", outfile)
 
     content = content if content != None else gurl.download(config.delay)
 
@@ -188,34 +184,34 @@ def spliturl(urlstr):
 
 # Returns a list of valid gopher URLS pointing to content
 # Menus are saved to files to prevent duplicate downloads
-def crawl_recursively(gurl, depthleft, config, rootgurl, path_history):
+def crawl_recursively(gurl, depthleft, config, rootgurl):
 
-    if gurl.path in path_history:
-        return []
+    def filter_links(link):
+        # Remove if not spanhost and different host
+        if not config.spanhosts and rootgurl.host != link.host:
+            debug("Not spanning: {} != {}".format(rootgurl.host, link.host))
+            return False
+
+        return True
 
     if depthleft == 0:
         return []
 
-    depthleft = None if depthleft is None else (depthleft-1)
+    links = []
 
-    # A gopher menu
-    if gurl.type == '1':
+    debug(gurl, config)
+
+    if gurl.type == '1': # If a menu
+        print("[{}] {}".format((config.maxdepth - depthleft), gurl.to_url_path()))
         content = gurl.download(config.delay)
-        next_gurls = getlinks(content.decode("utf-8", errors="ignore"), config, rootgurl.host, rootgurl.path)
-        # To Avoid duplicate downloads, pass this menu to save
-        write_gopherurl(gurl, config, content = content)
-        path_history.append(gurl.path)
-
+        write_gopherurl(gurl, config, content=content)
+        next_gurls = filter(filter_links, getlinks(content.decode('utf-8', errors='ignore'), config))
         for next_gurl in next_gurls:
-            debug(next_gurl, config)
-            if next_gurl.path in path_history:
-                continue
-            path_history.append(next_gurl.path)
-            next_gurls.extend(crawl_recursively(next_gurl, depthleft, config, rootgurl, path_history))
+            links.extend(crawl_recursively(next_gurl, (depthleft-1), config, rootgurl))
+    else: # If a regular file
+        links = [gurl]
 
-        return next_gurls
-    else:
-        return [gurl]
+    return links
 
 def main():
 
@@ -244,10 +240,13 @@ def main():
             rootgurl = GopherURL(root_gurl_type, "[ROOT URL]", path, host, port)
 
             if config.recursive:
-                gopher_urls = crawl_recursively(rootgurl, config.maxdepth, config, rootgurl, [])
+                print(":: Downloading menu tree")
+                gopher_urls = crawl_recursively(rootgurl, config.maxdepth, config, rootgurl)
 
                 if not config.only_menu:
+                    print(":: Downloading {} files".format(len(gopher_urls)))
                     for gurl in gopher_urls:
+                        print(gurl.to_file_path())
                         write_gopherurl(gurl, config)
 
             # Single file download
