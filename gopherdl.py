@@ -86,14 +86,17 @@ class GopherURL():
     def download(self, delay):
         time.sleep(delay)
         sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
-        sock.connect((self.host, self.port))
-        sock.send(bytes(self.path + "\r\n", "utf-8"))
         buffer = bytearray()
-        data = None
-        while data != b'':
-            data = sock.recv(2048)
-            buffer.extend(data)
-        sock.close()
+        try:
+            sock.connect((self.host, self.port))
+            sock.send(bytes(self.path + "\r\n", "utf-8"))
+            data = None
+            while data != b'':
+                data = sock.recv(2048)
+                buffer.extend(data)
+            sock.close()
+        except ConnectionRefusedError:
+            print("Error receiving from {}:{}{}".format(self.host, self.port, self.path))
         return buffer
 
     # path without adding gophermap
