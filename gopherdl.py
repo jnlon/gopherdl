@@ -79,25 +79,33 @@ class GopherURL():
     def valid(self):
         if len(self.path) == 0:
             return False
+        if self.port <= 0:
+            return False
         if self.type in GopherURL.invalid_types:
             return False
+        if self.path.startswith("URL:"):
+            return False
+
         return True
 
     def download(self, delay):
-        time.sleep(delay)
-        sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
-        buffer = bytearray()
-        try:
-            sock.connect((self.host, self.port))
-            sock.send(bytes(self.path + "\r\n", "utf-8"))
-            data = None
-            while data != b'':
-                data = sock.recv(2048)
-                buffer.extend(data)
-            sock.close()
-        except ConnectionRefusedError:
-            print("Error receiving from {}:{}{}".format(self.host, self.port, self.path))
-        return buffer
+        while True:
+            time.sleep(delay)
+            sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
+            buffer = bytearray()
+            try:
+                sock.connect((self.host, self.port))
+                sock.send(bytes(self.path + "\r\n", "utf-8"))
+                data = None
+                while data != b'':
+                    data = sock.recv(1024)
+                    buffer.extend(data)
+                sock.close()
+            except ConnectionRefusedError:
+                print("Connection refused from {}:{}{}, retrying...".format(self.host, self.port, self.path))
+                delay = 1
+                continue
+            return buffer
 
     # path without adding gophermap
     def to_url_path(self):
