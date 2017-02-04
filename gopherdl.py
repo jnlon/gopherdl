@@ -73,8 +73,8 @@ class GopherURL():
         self.type = type
 
     def __str__(self):
-        s = "<GopherURL ({})({})({})({})({})>"
-        return s.format(self.type, self.text, self.host, self.path, self.port)
+        s = '<GopherURL [{}]({})({})({})>'
+        return s.format(self.type, self.host, self.port, self.path)
 
     def valid(self):
         if len(self.path) == 0:
@@ -83,7 +83,15 @@ class GopherURL():
             return False
         if self.type in GopherURL.invalid_types:
             return False
-        if self.path.startswith("URL:"):
+        if 'URL:' in self.path:
+            return False
+
+        # If the path contains enough "../", it would be saved outside our
+        # download directory, which is a security risk. Ignore these files
+        file_path = os.path.relpath(self.to_file_path())
+        in_download_dir = file_path.startswith(self.host)
+
+        if not in_download_dir: 
             return False
 
         return True
