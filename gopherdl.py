@@ -200,7 +200,7 @@ def spliturl(urlstr):
 
     url = urlsplit(urlstr)
     path = "/" if len(url.path) == 0 else url.path
-    host = url.netloc
+    host = url.netloc.split(":")[0]
     port = 70 if url.port is None else url.port
 
     return (host, port, path)
