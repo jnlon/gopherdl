@@ -127,6 +127,13 @@ class GopherURL():
             outfile = os.path.join(outfile, "gophermap")
         return outfile
 
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            samehost = self.host == other.host
+            samepath = self.path == other.path
+            return samehost and samepath
+        return False
+
 def getlinks(pagecontent, config):
     urls = []
     for line in pagecontent.split(sep='\n'):
@@ -205,11 +212,8 @@ def spliturl(urlstr):
 
     return (host, port, path)
 
-# Returns a list of valid gopher URLS pointing to content
-# Menus are saved to files to prevent duplicate downloads
-def crawl_recursively(gurl, depth, config, rootgurl, prev_paths):
-
-    def filter_links(link):
+def crawl(rootgurl, config):
+    def filter_gurls(link):
         # Remove if not spanhost and different host
         if not config.spanhosts and rootgurl.host != link.host:
             debug("Not spanning: {} != {}".format(rootgurl.host, link.host), config)
@@ -221,39 +225,44 @@ def crawl_recursively(gurl, depth, config, rootgurl, prev_paths):
 
         return True
 
-    # Gone too deep
-    if config.maxdepth != 0 and depth == config.maxdepth:
-        return []
-
-    # Been to this menu before
-    if gurl.path in prev_paths:
-        return []
-
-    prev_paths.append(gurl.path)
-
-    links = []
-
-    debug(gurl, config)
-
-    if gurl.type == '1': # If a menu
-        print("[{}] {}".format(depth, gurl.to_url_path()))
-
-        content = None
+    def get_menu_content(gurl):
         path = gurl.to_file_path()
+        content = None
         if os.path.exists(path) and not config.clobber:
-            print(":: Using existing menu")
+            print(":: Using existing menu {}".format(path))
             content = slurp(path)
         else:
             content = gurl.download(config.delay)
+            write_gopherurl(gurl, config, content=content)
+        return content.decode('utf-8', errors='ignore') 
 
-        write_gopherurl(gurl, config, content=content)
-        next_gurls = filter(filter_links, getlinks(content.decode('utf-8', errors='ignore'), config))
-        for next_gurl in next_gurls:
-            links.extend(crawl_recursively(next_gurl, (depth+1), config, rootgurl, prev_paths))
-    else: # If a regular file
-        links = [gurl]
+    def split_gurls(gurls):
+        def is_menu(gurl): return gurl.type == '1'
+        def not_menu(gurl): return not gurl.type == '1'
+        menus = list(filter(is_menu, gurls))
+        files = list(filter(not_menu, gurls))
+        return (menus, files)
 
-    return links
+    debug(rootgurl, config)
+    content = get_menu_content(rootgurl)
+    gurls = getlinks(content, config)
+    gurls = list(filter(filter_gurls, gurls))
+
+    menus, files = split_gurls(gurls)
+    print(len(files))
+
+    for menu in menus:
+        debug(menu, config)
+        content = get_menu_content(menu)
+        new_gurls = filter(filter_gurls, getlinks(content, config))
+        new_menus, new_files = split_gurls(new_gurls)
+        new_menus = filter(lambda m: not m in menus, new_menus)
+        new_files = filter(lambda f: not f in files, new_files)
+        menus += list(new_menus)
+        files += list(new_files)
+        print("[{} files {} menus] {}".format(len(files), len(menus), menu.to_url_path()))
+
+    return list(files)
 
 def main():
 
@@ -289,7 +298,7 @@ def main():
 
             if config.recursive:
                 print(":: Downloading menu tree")
-                gopher_urls = crawl_recursively(rootgurl, 0, config, rootgurl, [])
+                gopher_urls = crawl(rootgurl, config)
 
                 if not config.only_menu and len(gopher_urls) > 0:
                     print(":: Downloading {} files".format(len(gopher_urls)))
