@@ -5,6 +5,7 @@
 from getopt import getopt, GetoptError
 from urllib.parse import urlsplit
 from sys import argv
+from math import inf as INFINITY
 import time
 import socket
 import os
@@ -17,7 +18,7 @@ class Config():
         # Commandline options
         flags = optdict.keys()
         self.recursive = True if '-r' in flags else False
-        self.maxdepth = 0 if not '-l' in flags else int(optdict['-l'])
+        self.maxdepth = INFINITY if not '-l' in flags else int(optdict['-l'])
         self.spanhosts = True if '-s' in flags else False
         self.helpme = True if '-h' in flags else False
         self.clobber = True if '-c' in flags else False
@@ -71,6 +72,9 @@ class GopherURL():
         self.path = path
         self.text = text
         self.type = type
+
+    def __hash__(self):
+        return hash((self.host, self.path))
 
     def __str__(self):
         s = '<GopherURL [{}]({})({})({})>'
@@ -134,6 +138,32 @@ class GopherURL():
             return samehost and samepath
         return False
 
+
+def debug_list(lst, message, config):
+    debug(message, config)
+    for item in lst:
+        debug(item, config)
+
+def print_help_quit(ret):
+    print("Usage: gopherdl.py [options] [url1 url2 ...]")
+    print("Options:")
+    print_options()
+    quit(ret)
+
+def mkdirs(path):
+    at = ""
+    for p in path.split(os.path.sep):
+        at = os.path.join(at, p)
+        if not os.path.exists(at):
+            os.mkdir(at)
+
+def slurp(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+def filter_duplicates(to_filter, items):
+    return list(filter(lambda t: not t in items, to_filter))
+
 def getlinks(pagecontent, config):
     urls = []
     for line in pagecontent.split(sep='\n'):
@@ -157,24 +187,9 @@ def getlinks(pagecontent, config):
         except ValueError as e:
             debug("Invalid Port: {}".format(e), config)
 
+    debug_list(urls, "All urls: {}".format(len(urls)), config)
+
     return urls
-
-def print_help_quit(ret):
-    print("Usage: gopherdl.py [options] [url1 url2 ...]")
-    print("Options:")
-    print_options()
-    quit(ret)
-
-def mkdirs(path):
-    at = ""
-    for p in path.split(os.path.sep):
-        at = os.path.join(at, p)
-        if not os.path.exists(at):
-            os.mkdir(at)
-
-def slurp(path):
-    with open(path, "rb") as f:
-        return f.read()
 
 def write_gopherurl(gurl, config, content=None):
     debug("write_gopherurl: {}".format(gurl), config)
@@ -213,13 +228,14 @@ def spliturl(urlstr):
     return (host, port, path)
 
 def crawl(rootgurl, config):
-    def filter_gurls(link):
-        # Remove if not spanhost and different host
-        if not config.spanhosts and rootgurl.host != link.host:
+    def ok_gurl_path(link):
+        on_different_host = rootgurl.host != link.host
+        if not config.spanhosts and on_different_host:
             debug("Not spanning: {} != {}".format(rootgurl.host, link.host), config)
             return False
 
-        if not config.ascend_parents and not link.path.startswith(rootgurl.path):
+        off_original_path = not link.path.startswith(rootgurl.path)
+        if not config.ascend_parents and off_original_path:
             debug("Not Ascending: {} <-> {}".format(rootgurl.path, link.path), config)
             return False
 
@@ -236,31 +252,34 @@ def crawl(rootgurl, config):
             write_gopherurl(gurl, config, content=content)
         return content.decode('utf-8', errors='ignore') 
 
-    def split_gurls(gurls):
-        def is_menu(gurl): return gurl.type == '1'
-        def not_menu(gurl): return not gurl.type == '1'
-        menus = list(filter(is_menu, gurls))
-        files = list(filter(not_menu, gurls))
-        return (menus, files)
+    def is_menu(gurl): return gurl.type == '1'
+    def not_menu(gurl): return not is_menu(gurl)
+    def get_menus(gurls): return list(filter(is_menu, gurls))
+    def get_files(gurls): return list(filter(not_menu, gurls))
 
     debug(rootgurl, config)
     content = get_menu_content(rootgurl)
     gurls = getlinks(content, config)
-    gurls = list(filter(filter_gurls, gurls))
+    gurls = list(filter(ok_gurl_path, gurls))
 
-    menus, files = split_gurls(gurls)
-    print(len(files))
+    menus = get_menus(gurls)
+    files = get_files(gurls)
+    depth = 0
 
     for menu in menus:
+        if depth > config.maxdepth:
+            debug("Maxdepth {} reached".format(config.maxdepth), config)
+            return list(files)
         debug(menu, config)
         content = get_menu_content(menu)
-        new_gurls = filter(filter_gurls, getlinks(content, config))
-        new_menus, new_files = split_gurls(new_gurls)
-        new_menus = filter(lambda m: not m in menus, new_menus)
-        new_files = filter(lambda f: not f in files, new_files)
-        menus += list(new_menus)
-        files += list(new_files)
-        print("[{} files {} menus] {}".format(len(files), len(menus), menu.to_url_path()))
+        all_menu_links = getlinks(content, config)
+        new_gurls = list(filter(ok_gurl_path, all_menu_links))
+        new_menus = filter_duplicates(get_menus(new_gurls), menus)
+        new_files = filter_duplicates(get_files(new_gurls), files)
+        menus += new_menus
+        files += new_files
+        depth += 1
+        print("[{} files, {} menus] {}".format(len(files), len(menus), menu.to_url_path()))
 
     return list(files)
 
@@ -302,8 +321,9 @@ def main():
 
                 if not config.only_menu and len(gopher_urls) > 0:
                     print(":: Downloading {} files".format(len(gopher_urls)))
-                    for gurl in gopher_urls:
-                        print(gurl.to_file_path())
+                    for i in range(len(gopher_urls)):
+                        gurl = gopher_urls[i]
+                        print("[{}/{}] {}".format((i + 1), len(gopher_urls), gurl.to_file_path()))
                         write_gopherurl(gurl, config)
 
             # Single file download
