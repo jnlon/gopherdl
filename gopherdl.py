@@ -28,7 +28,7 @@ class Config():
         self.debug = True if '-d' in flags else False
 
     def __str__(self):
-        lst = ["\n  recursive = %s" % self.recursive,
+        lst = ["  recursive = %s" % self.recursive,
                "  maxdepth = %s" % self.maxdepth,
                "  spanhosts = %s" % self.spanhosts,
                "  helpme = %s" % self.helpme,
@@ -39,7 +39,6 @@ class Config():
                "  debug = %s" % self.debug]
 
         return "\n".join(lst)
-
 
 def print_options():
     helpdoc = {"-r" : "Enable recursive downloads",
@@ -54,7 +53,6 @@ def print_options():
 
     for (key, value) in helpdoc.items():
         print("  {} {}".format(key, value))
-
 
 def debug(msg, config):
     if config.debug:
@@ -148,11 +146,11 @@ def print_help_quit(ret):
     quit(ret)
 
 def mkdirs(path):
-    at = ""
+    cd = str()
     for p in path.split(os.path.sep):
-        at = os.path.join(at, p)
-        if not os.path.exists(at):
-            os.mkdir(at)
+        cd = os.path.join(cd, p)
+        if not os.path.exists(cd):
+            os.mkdir(cd)
 
 def slurp(path):
     with open(path, "rb") as f:
@@ -211,7 +209,7 @@ def spliturl(urlstr):
 
     # They specified an incompatible protocol
     if has_scheme and not has_gopher_scheme:
-        raise ValueError
+        raise ValueError("Invalid scheme in url '{}'".format(urlstr))
 
     # Assume they meant gopher, give it an empty scheme
     if not has_scheme:
@@ -295,7 +293,7 @@ def main():
     config = Config(optdict)
     hosts = args
 
-    debug("config: {}".format(config), config)
+    debug("\n{}".format(config), config)
 
     if config.helpme:
         print_help_quit(0)
@@ -304,8 +302,8 @@ def main():
 
     for host in hosts:
         try:
-            # probably a menu if there's no file extension or ends in /
             def probably_a_menu(path):
+                # probably a menu if there's no file extension or ends in /
                 end = path.split("/")[-1]
                 return not "." in end or path[-1] == '/'
 
