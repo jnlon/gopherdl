@@ -73,9 +73,6 @@ class GopherURL():
         self.text = text
         self.type = type
 
-    def __hash__(self):
-        return hash((self.host, self.path))
-
     def __str__(self):
         s = '<GopherURL [{}]({})({})({})>'
         return s.format(self.type, self.host, self.port, self.path)
@@ -115,7 +112,7 @@ class GopherURL():
                 sock.close()
             except ConnectionRefusedError:
                 print("Connection refused from {}:{}{}, retrying...".format(self.host, self.port, self.path))
-                delay = 1
+                delay = delay if delay != 0 else 1
                 continue
             return buffer
 
@@ -228,7 +225,8 @@ def spliturl(urlstr):
     return (host, port, path)
 
 def crawl(rootgurl, config):
-    def ok_gurl_path(link):
+
+    def gurl_ok_config(link):
         on_different_host = rootgurl.host != link.host
         if not config.spanhosts and on_different_host:
             debug("Not spanning: {} != {}".format(rootgurl.host, link.host), config)
@@ -241,7 +239,7 @@ def crawl(rootgurl, config):
 
         return True
 
-    def get_menu_content(gurl):
+    def retrieve_menu_content(gurl):
         path = gurl.to_file_path()
         content = None
         if os.path.exists(path) and not config.clobber:
@@ -258,9 +256,9 @@ def crawl(rootgurl, config):
     def get_files(gurls): return list(filter(not_menu, gurls))
 
     debug(rootgurl, config)
-    content = get_menu_content(rootgurl)
+    content = retrieve_menu_content(rootgurl)
     gurls = getlinks(content, config)
-    gurls = list(filter(ok_gurl_path, gurls))
+    gurls = list(filter(gurl_ok_config, gurls))
 
     menus = get_menus(gurls)
     files = get_files(gurls)
@@ -270,10 +268,11 @@ def crawl(rootgurl, config):
         if depth > config.maxdepth:
             debug("Maxdepth {} reached".format(config.maxdepth), config)
             return list(files)
+
         debug(menu, config)
-        content = get_menu_content(menu)
+        content = retrieve_menu_content(menu)
         all_menu_links = getlinks(content, config)
-        new_gurls = list(filter(ok_gurl_path, all_menu_links))
+        new_gurls = list(filter(gurl_ok_config, all_menu_links))
         new_menus = filter_duplicates(get_menus(new_gurls), menus)
         new_files = filter_duplicates(get_files(new_gurls), files)
         menus += new_menus
@@ -326,12 +325,15 @@ def main():
                         print("[{}/{}] {}".format((i + 1), len(gopher_urls), gurl.to_file_path()))
                         write_gopherurl(gurl, config)
 
-            # Single file download
-            else:
+            else: 
+                # Single file download
                 print(":: Downloading single file ")
                 print(rootgurl.to_file_path())
                 write_gopherurl(rootgurl, config)
+
         except ValueError as e:
             print(e)
 
-main()
+
+if __name__ == "__main__":
+    main()
