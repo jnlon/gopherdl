@@ -17,15 +17,15 @@ class Config():
     def __init__(self, optdict):
         # Commandline options
         flags = optdict.keys()
-        self.recursive = True if '-r' in flags else False
+        self.recursive = '-r' in flags
         self.maxdepth = INFINITY if not '-l' in flags else int(optdict['-l'])
-        self.spanhosts = True if '-s' in flags else False
-        self.helpme = True if '-h' in flags else False
-        self.clobber = True if '-c' in flags else False
-        self.only_menu = True if '-m' in flags else False
-        self.ascend_parents = False if not '-p' in flags else True
+        self.spanhosts = '-s' in flags
+        self.helpme = '-h' in flags
+        self.clobber = '-c' in flags
+        self.only_menu = '-m' in flags
+        self.ascend_parents = '-p' in flags
         self.delay = 0.0 if not '-w' in flags else float(optdict['-w'])
-        self.debug = True if '-d' in flags else False
+        self.debug = '-d' in flags
 
     def __str__(self):
         lst = ["  recursive = %s" % self.recursive,
