@@ -75,6 +75,13 @@ class GopherURL():
         s = '<GopherURL [{}]({})({})({})>'
         return s.format(self.type, self.host, self.port, self.path)
 
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            samehost = self.host == other.host
+            samepath = self.path == other.path
+            return samehost and samepath
+        return False
+
     def valid(self):
         if len(self.path) == 0:
             return False
@@ -125,13 +132,6 @@ class GopherURL():
         if self.type == '1':
             outfile = os.path.join(outfile, "gophermap")
         return outfile
-
-    def __eq__(self, other):
-        if isinstance(other, self.__class__):
-            samehost = self.host == other.host
-            samepath = self.path == other.path
-            return samehost and samepath
-        return False
 
 
 def debug_list(lst, message, config):
@@ -331,7 +331,6 @@ def main():
 
         except ValueError as e:
             print(e)
-
 
 if __name__ == "__main__":
     main()
