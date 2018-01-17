@@ -2,9 +2,9 @@
 
 # gopherdl.py
 
-from getopt import getopt, GetoptError
-from sys import argv
-from math import inf as INFINITY
+import getopt
+import sys
+import math
 import urllib.parse
 import time
 import socket
@@ -19,7 +19,7 @@ class Config():
         # Commandline options
         flags = optdict.keys()
         self.recursive = '-r' in flags
-        self.maxdepth = INFINITY if not '-l' in flags else int(optdict['-l'])
+        self.maxdepth = math.inf if not '-l' in flags else int(optdict['-l'])
         self.spanhosts = '-s' in flags
         self.helpme = '-h' in flags
         self.clobber = '-c' in flags
@@ -311,8 +311,8 @@ def main():
     optlist, args = ([], [])
 
     try:
-        optlist, args = getopt(argv[1:], Config.getopt_spec)
-    except GetoptError:
+        optlist, args = getopt.getopt(sys.argv[1:], Config.getopt_spec)
+    except getopt.GetoptError:
         print_help_quit(1)
 
     optdict = dict(optlist)
