@@ -170,9 +170,10 @@ def slurp(path):
 def filter_duplicates(to_filter, items):
     return list(filter(lambda t: not t in items, to_filter))
 
-def getlinks(pagecontent, config):
+# Extract urls from a gopher menu
+def getlinks(menucontent, config):
     urls = []
-    for line in pagecontent.split(sep='\n'):
+    for line in menucontent.split(sep='\n'):
         tokens = line.strip().split(sep='\t')
         try:
             type = tokens[0][0]
@@ -233,19 +234,19 @@ def spliturl(urlstr):
 
     return (host, port, path)
 
-def crawl(rootgurl, config):
+def crawl(root_gurl, config):
 
     def gurl_ok_by_config(link):
 
-        on_different_host = rootgurl.host != link.host
+        on_different_host = root_gurl.host != link.host
 
         if not config.spanhosts and on_different_host:
-            debug("Not spanning: {} != {}".format(rootgurl.host, link.host), config)
+            debug("Not spanning: {} != {}".format(root_gurl.host, link.host), config)
             return False
 
-        off_original_path = not link.path.startswith(rootgurl.path)
+        off_original_path = not link.path.startswith(root_gurl.path)
         if not config.ascend_parents and off_original_path:
-            debug("Not Ascending: {} <-> {}".format(rootgurl.path, link.path), config)
+            debug("Not Ascending: {} <-> {}".format(root_gurl.path, link.path), config)
             return False
 
         # Filter by regular expressions
@@ -257,7 +258,7 @@ def crawl(rootgurl, config):
             return not matches
 
         if config.accept_regex != None:
-            matches = config.reject_regex.fullmatch(url)
+            matches = config.accept_regex.fullmatch(url)
             debug("Accept regex on {}: {}".format(url, matches), config)
             return matches
 
@@ -279,11 +280,14 @@ def crawl(rootgurl, config):
     def get_menus(gurls): return list(filter(is_menu, gurls))
     def get_files(gurls): return list(filter(not_menu, gurls))
 
-    debug(rootgurl, config)
-    content = retrieve_menu_content(rootgurl)
-    gurls = getlinks(content, config)
-    gurls = list(filter(gurl_ok_by_config, gurls))
+    def gopher_urls_from_menu_link(menu_gurl):
+        debug(menu_gurl, config)
+        menu_content = retrieve_menu_content(menu_gurl)
+        gurls = getlinks(menu_content, config)
+        gurls = list(filter(gurl_ok_by_config, gurls))
+        return gurls
 
+    gurls = gopher_urls_from_menu_link(root_gurl)
     menus = get_menus(gurls)
     files = get_files(gurls)
     depth = 0
@@ -293,10 +297,7 @@ def crawl(rootgurl, config):
             debug("Maxdepth {} reached".format(config.maxdepth), config)
             return list(files)
 
-        debug(menu, config)
-        content = retrieve_menu_content(menu)
-        all_menu_links = getlinks(content, config)
-        new_gurls = list(filter(gurl_ok_by_config, all_menu_links))
+        new_gurls = gopher_urls_from_menu_link(menu)
         new_menus = filter_duplicates(get_menus(new_gurls), menus)
         new_files = filter_duplicates(get_files(new_gurls), files)
         menus += new_menus
@@ -335,12 +336,12 @@ def main():
 
             host, port, path = spliturl(host)
             root_gurl_type = "1" if probably_a_menu(path) else "0"
-            rootgurl = GopherURL(root_gurl_type, "[ROOT URL]", path, host, port)
-            debug("rootgurl: {}".format(rootgurl), config)
+            root_gurl = GopherURL(root_gurl_type, "[ROOT URL]", path, host, port)
+            debug("root_gurl: {}".format(root_gurl), config)
 
             if config.recursive:
                 print(":: Downloading menu tree")
-                gopher_urls = crawl(rootgurl, config)
+                gopher_urls = crawl(root_gurl, config)
 
                 if not config.only_menu and len(gopher_urls) > 0:
                     print(":: Downloading {} files".format(len(gopher_urls)))
@@ -352,8 +353,8 @@ def main():
             else: 
                 # Single file download
                 print(":: Downloading single file ")
-                print(rootgurl.to_file_path())
-                write_gopherurl(rootgurl, config)
+                print(root_gurl.to_file_path())
+                write_gopherurl(root_gurl, config)
 
         except ValueError as e:
             print(e)
