@@ -3,16 +3,17 @@
 # gopherdl.py
 
 from getopt import getopt, GetoptError
-from urllib.parse import urlsplit
 from sys import argv
 from math import inf as INFINITY
+import urllib.parse
 import time
 import socket
 import os
+import re
 
 class Config():
 
-    getopt_spec = "l:w:hrspcdm"
+    getopt_spec = "l:w:hrspcdmA:R:"
 
     def __init__(self, optdict):
         # Commandline options
@@ -26,30 +27,36 @@ class Config():
         self.ascend_parents = '-p' in flags
         self.delay = 0.0 if not '-w' in flags else float(optdict['-w'])
         self.debug = '-d' in flags
+        self.accept_regex = None if not '-A' in flags else re.compile(optdict['-A'])
+        self.reject_regex = None if not '-R' in flags else re.compile(optdict['-R'])
 
     def __str__(self):
-        lst = ["  recursive = %s" % self.recursive,
-               "  maxdepth = %s" % self.maxdepth,
-               "  spanhosts = %s" % self.spanhosts,
-               "  helpme = %s" % self.helpme,
-               "  clobber = %s" % self.clobber,
-               "  only_menu = %s" % self.only_menu,
-               "  ascend_parents = %s" % self.ascend_parents,
-               "  delay = %s" % self.delay,
-               "  debug = %s" % self.debug]
+        lst = [ "  recursive = %s" % self.recursive,
+                "  maxdepth = %s" % self.maxdepth,
+                "  spanhosts = %s" % self.spanhosts,
+                "  helpme = %s" % self.helpme,
+                "  clobber = %s" % self.clobber,
+                "  only_menu = %s" % self.only_menu,
+                "  ascend_parents = %s" % self.ascend_parents,
+                "  delay = %s" % self.delay,
+                "  debug = %s" % self.debug,
+                "  accept_regex = %s" % self.accept_regex,
+                "  reject_regex = %s" % self.reject_regex ]
 
         return "\n".join(lst)
 
 def print_options():
-    helpdoc = {"-r" : "Enable recursive downloads",
-               "-l [depth]" : "Maximum depth in recursive downloads (default none)",
-               "-s" : "Span hosts on recursive downloads",
-               "-h" : "Show this help",
-               "-c" : "Enable file clobbering (overwrite existing)",
-               "-m" : "Only download gopher menus",
-               "-p" : "Allow ascension to the parent directories",
-               "-w [seconds]" : "Delay between downloads",
-               "-d" : "Enable debug messages"}
+    helpdoc = { "-r" : "Enable recursive downloads",
+                "-l [depth]" : "Maximum depth in recursive downloads (default none)",
+                "-s" : "Span hosts on recursive downloads",
+                "-h" : "Show this help",
+                "-c" : "Enable file clobbering (overwrite existing)",
+                "-m" : "Only download gopher menus",
+                "-p" : "Allow ascension to the parent directories",
+                "-w [seconds]" : "Delay between downloads",
+                "-d" : "Enable debug messages",
+                "-A" : "Accept URL regex",
+                "-R" : "Reject URL regex" }
 
     for (key, value) in helpdoc.items():
         print("  {} {}".format(key, value))
@@ -62,7 +69,7 @@ class GopherURL():
     invalid_types = ['7',         # Search service
                      '2',         # CSO
                      '3',         # Error
-                     '8', 'T']   # telnet
+                     '8', 'T']    # telnet
 
     def __init__(self, type, text, path, host, port):
         self.host = host
@@ -120,6 +127,10 @@ class GopherURL():
                 delay = delay if delay != 0 else 1
                 continue
             return buffer
+
+    # As it would look in a browser urlbar
+    def to_url(self):
+        return urllib.parse.urlunparse(('gopher', self.host, self.path, '', '', ''))
 
     # path without adding gophermap
     def to_url_path(self):
@@ -215,7 +226,7 @@ def spliturl(urlstr):
     if not has_scheme:
         urlstr = "//{}".format(urlstr)
 
-    url = urlsplit(urlstr)
+    url = urllib.parse.urlsplit(urlstr)
     path = "/" if len(url.path) == 0 else url.path
     host = url.netloc.split(":")[0]
     port = 70 if url.port is None else url.port
@@ -224,8 +235,10 @@ def spliturl(urlstr):
 
 def crawl(rootgurl, config):
 
-    def gurl_ok_config(link):
+    def gurl_ok_by_config(link):
+
         on_different_host = rootgurl.host != link.host
+
         if not config.spanhosts and on_different_host:
             debug("Not spanning: {} != {}".format(rootgurl.host, link.host), config)
             return False
@@ -234,6 +247,19 @@ def crawl(rootgurl, config):
         if not config.ascend_parents and off_original_path:
             debug("Not Ascending: {} <-> {}".format(rootgurl.path, link.path), config)
             return False
+
+        # Filter by regular expressions
+        url = link.to_url()
+
+        if config.reject_regex != None: 
+            matches = config.reject_regex.fullmatch(url)
+            debug("Reject regex on {}: {}".format(url, not matches), config)
+            return not matches
+
+        if config.accept_regex != None:
+            matches = config.reject_regex.fullmatch(url)
+            debug("Accept regex on {}: {}".format(url, matches), config)
+            return matches
 
         return True
 
@@ -256,7 +282,7 @@ def crawl(rootgurl, config):
     debug(rootgurl, config)
     content = retrieve_menu_content(rootgurl)
     gurls = getlinks(content, config)
-    gurls = list(filter(gurl_ok_config, gurls))
+    gurls = list(filter(gurl_ok_by_config, gurls))
 
     menus = get_menus(gurls)
     files = get_files(gurls)
@@ -270,7 +296,7 @@ def crawl(rootgurl, config):
         debug(menu, config)
         content = retrieve_menu_content(menu)
         all_menu_links = getlinks(content, config)
-        new_gurls = list(filter(gurl_ok_config, all_menu_links))
+        new_gurls = list(filter(gurl_ok_by_config, all_menu_links))
         new_menus = filter_duplicates(get_menus(new_gurls), menus)
         new_files = filter_duplicates(get_files(new_gurls), files)
         menus += new_menus
