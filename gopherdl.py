@@ -11,9 +11,12 @@ import socket
 import os
 import re
 
+# TOFIX: content=None on write_gopherurl is a bad codesmell, this function
+# should only be called in one place
+
 class Config():
 
-    getopt_spec = "l:w:hrspcdmA:R:"
+    getopt_spec = "l:w:hrspcdmnA:R:M"
 
     def __init__(self, optdict):
         # Commandline options
@@ -23,12 +26,14 @@ class Config():
         self.spanhosts = '-s' in flags
         self.helpme = '-h' in flags
         self.clobber = '-c' in flags
-        self.only_menu = '-m' in flags
+        self.only_save_menu = '-m' in flags
+        self.no_save_menu = '-n' in flags
         self.ascend_parents = '-p' in flags
         self.delay = 0.0 if not '-w' in flags else float(optdict['-w'])
         self.debug = '-d' in flags
         self.accept_regex = None if not '-A' in flags else re.compile(optdict['-A'])
         self.reject_regex = None if not '-R' in flags else re.compile(optdict['-R'])
+        self.regex_on_menus = '-M' in flags
 
     def __str__(self):
         lst = [ "  recursive = %s" % self.recursive,
@@ -36,12 +41,13 @@ class Config():
                 "  spanhosts = %s" % self.spanhosts,
                 "  helpme = %s" % self.helpme,
                 "  clobber = %s" % self.clobber,
-                "  only_menu = %s" % self.only_menu,
+                "  only_save_menu = %s" % self.only_save_menu,
                 "  ascend_parents = %s" % self.ascend_parents,
                 "  delay = %s" % self.delay,
                 "  debug = %s" % self.debug,
                 "  accept_regex = %s" % self.accept_regex,
-                "  reject_regex = %s" % self.reject_regex ]
+                "  reject_regex = %s" % self.reject_regex,
+                "  regex_on_menus = %s" % self.regex_on_menus ]
 
         return "\n".join(lst)
 
@@ -52,11 +58,13 @@ def print_options():
                 "-h" : "Show this help",
                 "-c" : "Enable file clobbering (overwrite existing)",
                 "-m" : "Only download gopher menus",
+                "-n" : "Never download gopher menus",
                 "-p" : "Allow ascension to the parent directories",
                 "-w [seconds]" : "Delay between downloads",
                 "-d" : "Enable debug messages",
                 "-A" : "Accept URL regex",
-                "-R" : "Reject URL regex" }
+                "-R" : "Reject URL regex",
+                "-M" : "Apply accept/reject regex rules to menus (can prevent recursion)" }
 
     for (key, value) in helpdoc.items():
         print("  {} {}".format(key, value))
@@ -128,6 +136,9 @@ class GopherURL():
                 continue
             return buffer
 
+    def is_menu(self):
+        return self.type == '1'
+
     # As it would look in a browser urlbar
     def to_url(self):
         return urllib.parse.urlunparse(('gopher', self.host, self.path, '', '', ''))
@@ -140,7 +151,7 @@ class GopherURL():
 
     def to_file_path(self):
         outfile = self.to_url_path()
-        if self.type == '1':
+        if self.is_menu():
             outfile = os.path.join(outfile, "gophermap")
         return outfile
 
@@ -199,17 +210,23 @@ def getlinks(menucontent, config):
     return urls
 
 def write_gopherurl(gurl, config, content=None):
-    debug("write_gopherurl: {}".format(gurl), config)
-    outfile = gurl.to_file_path()
-    mkdirs(os.path.dirname(outfile))
 
-    # If it exists and we can't clobber, leave
+    # If it's a menu and config says drop menu's, leave
+    if config.no_save_menu and gurl.is_menu():
+        debug("Not saving menu for {}".format(gurl.to_url()), config)
+        return
+
+    outfile = gurl.to_file_path()
+
+    # If it exists and config says no clobber, leave
     if os.path.exists(outfile) and not config.clobber:
         print("Not overwriting:", outfile)
         return
 
+    mkdirs(os.path.dirname(outfile))
     content = content if content != None else gurl.download(config.delay)
 
+    debug("write_gopherurl: {}".format(gurl), config)
     with open(outfile, "wb") as outfile:
         outfile.write(content)
 
@@ -239,7 +256,6 @@ def crawl(root_gurl, config):
     def gurl_ok_by_config(link):
 
         on_different_host = root_gurl.host != link.host
-
         if not config.spanhosts and on_different_host:
             debug("Not spanning: {} != {}".format(root_gurl.host, link.host), config)
             return False
@@ -249,18 +265,26 @@ def crawl(root_gurl, config):
             debug("Not Ascending: {} <-> {}".format(root_gurl.path, link.path), config)
             return False
 
+        # If config says not to apply regex on menus, stop here if it is
+        # If the link is a menu AND we don't apply regex on menus, return
+        if not config.regex_on_menus and link.is_menu():
+            debug("Not applying regex to menu {}".format(link.to_url()), config)
+            return True
+
         # Filter by regular expressions
         url = link.to_url()
 
         if config.reject_regex != None: 
-            matches = config.reject_regex.fullmatch(url)
-            debug("Reject regex on {}: {}".format(url, not matches), config)
-            return not matches
+            match = config.reject_regex.fullmatch(url)
+            if match != None:
+                debug("Rejected by regex: {}".format(url), config)
+                return False
 
         if config.accept_regex != None:
-            matches = config.accept_regex.fullmatch(url)
-            debug("Accept regex on {}: {}".format(url, matches), config)
-            return matches
+            match = config.accept_regex.fullmatch(url)
+            if match != None:
+                debug("Regex accept: {}".format(url), config)
+                return True
 
         return True
 
@@ -275,10 +299,8 @@ def crawl(root_gurl, config):
             write_gopherurl(gurl, config, content=content)
         return content.decode('utf-8', errors='ignore') 
 
-    def is_menu(gurl): return gurl.type == '1'
-    def not_menu(gurl): return not is_menu(gurl)
-    def get_menus(gurls): return list(filter(is_menu, gurls))
-    def get_files(gurls): return list(filter(not_menu, gurls))
+    def get_menus(gurls): return [ gurl for gurl in gurls if gurl.is_menu() ]
+    def get_files(gurls): return [ gurl for gurl in gurls if not gurl.is_menu() ]
 
     def gopher_urls_from_menu_link(menu_gurl):
         debug(menu_gurl, config)
@@ -330,7 +352,7 @@ def main():
     for host in hosts:
         try:
             def probably_a_menu(path):
-                # probably a menu if there's no file extension or ends in /
+                # hueristic: probably a menu if there's no file extension or ends in /
                 end = path.split("/")[-1]
                 return not "." in end or path[-1] == '/'
 
@@ -340,10 +362,11 @@ def main():
             debug("root_gurl: {}".format(root_gurl), config)
 
             if config.recursive:
+                # Recursive download
                 print(":: Downloading menu tree")
                 gopher_urls = crawl(root_gurl, config)
 
-                if not config.only_menu and len(gopher_urls) > 0:
+                if not config.only_save_menu and len(gopher_urls) > 0:
                     print(":: Downloading {} files".format(len(gopher_urls)))
                     for i in range(len(gopher_urls)):
                         gurl = gopher_urls[i]
