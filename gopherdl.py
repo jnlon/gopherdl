@@ -97,6 +97,9 @@ class GopherURL():
             return samehost and samepath
         return False
 
+    def __hash__(self):
+        return hash(self.to_file_path())
+
     def valid(self):
         if len(self.path) == 0:
             return False
@@ -174,12 +177,15 @@ def mkdirs(path):
         if not os.path.exists(cd):
             os.mkdir(cd)
 
+def get_menus(gurls): 
+    return [ g for g in gurls if g.is_menu() ]
+
+def get_files(gurls): 
+    return [ g for g in gurls if not g.is_menu() ]
+
 def slurp(path):
     with open(path, "rb") as f:
         return f.read()
-
-def filter_duplicates(to_filter, items):
-    return list(filter(lambda t: not t in items, to_filter))
 
 # Extract urls from a gopher menu
 def getlinks(menucontent, config):
@@ -210,11 +216,6 @@ def getlinks(menucontent, config):
     return urls
 
 def write_gopherurl(gurl, config, content=None):
-
-    # If it's a menu and config says drop menu's, leave
-    if config.no_save_menu and gurl.is_menu():
-        debug("Not saving menu for {}".format(gurl.to_url()), config)
-        return
 
     outfile = gurl.to_file_path()
 
@@ -268,7 +269,6 @@ def crawl(root_gurl, config):
         # If config says not to apply regex on menus, stop here if it is
         # If the link is a menu AND we don't apply regex on menus, return
         if not config.regex_on_menus and link.is_menu():
-            debug("Not applying regex to menu {}".format(link.to_url()), config)
             return True
 
         # Filter by regular expressions
@@ -277,14 +277,16 @@ def crawl(root_gurl, config):
         if config.reject_regex != None: 
             match = config.reject_regex.fullmatch(url)
             if match != None:
-                debug("Rejected by regex: {}".format(url), config)
+                debug("Reject: {}".format(url), config)
                 return False
 
         if config.accept_regex != None:
             match = config.accept_regex.fullmatch(url)
             if match != None:
-                debug("Regex accept: {}".format(url), config)
+                debug("Accept: {}".format(url), config)
                 return True
+            else:
+                return False
 
         return True
 
@@ -296,43 +298,93 @@ def crawl(root_gurl, config):
             content = slurp(path)
         else:
             content = gurl.download(config.delay)
-            write_gopherurl(gurl, config, content=content)
         return content.decode('utf-8', errors='ignore') 
-
-    def get_menus(gurls): return [ gurl for gurl in gurls if gurl.is_menu() ]
-    def get_files(gurls): return [ gurl for gurl in gurls if not gurl.is_menu() ]
 
     def gopher_urls_from_menu_link(menu_gurl):
         debug(menu_gurl, config)
         menu_content = retrieve_menu_content(menu_gurl)
+
         gurls = getlinks(menu_content, config)
+        debug_list(gurls, "Before filter # urls: {}".format(len(gurls)), config)
+
         gurls = list(filter(gurl_ok_by_config, gurls))
+        debug_list(gurls, "After filter # urls: {}".format(len(gurls)), config)
+
         return gurls
 
-    gurls = gopher_urls_from_menu_link(root_gurl)
-    menus = get_menus(gurls)
-    files = get_files(gurls)
+    gurls = set(gopher_urls_from_menu_link(root_gurl))
+    menus = list(set(get_menus(gurls))) + [root_gurl]
     depth = 0
 
     for menu in menus:
         if depth > config.maxdepth:
             debug("Maxdepth {} reached".format(config.maxdepth), config)
-            return list(files)
+            break
 
-        new_gurls = gopher_urls_from_menu_link(menu)
-        new_menus = filter_duplicates(get_menus(new_gurls), menus)
-        new_files = filter_duplicates(get_files(new_gurls), files)
-        menus += new_menus
-        files += new_files
+        new_gurls = set(gopher_urls_from_menu_link(menu))
+        new_unique_gurls = new_gurls.difference(gurls)
+        gurls.update(new_unique_gurls)
+        new_unique_gurls_menus = get_menus(new_unique_gurls)
+        menus.extend(new_unique_gurls_menus)
         depth += 1
-        print("[{} files, {} menus] {}".format(len(files), len(menus), menu.to_url_path()))
 
-    return list(files)
+        print("{} | {}/{} | {} ".format( len(gurls), depth, len(menus), menu.to_url_path()))
+
+    return gurls
+
+def download_gopher_urls(gopher_urls, config):
+    for i in range(len(gopher_urls)):
+        gurl = gopher_urls[i]
+        print("[{}/{}] {}".format((i + 1), len(gopher_urls), gurl.to_file_path()))
+        write_gopherurl(gurl, config)
+
+def gopherdl(host, config):
+
+    # hueristic: probably a menu if there's no file extension or ends in /
+    def probably_a_menu(path):
+        end = path.split("/")[-1]
+        return not "." in end or path[-1] == '/'
+
+    host, port, path = spliturl(host)
+    root_gurl_type = "1" if probably_a_menu(path) else "0"
+    root_gurl = GopherURL(root_gurl_type, "[ROOT URL]", path, host, port)
+    debug("root_gurl: {}".format(root_gurl), config)
+
+    if config.recursive:
+        # Recursive download
+        print(":: Downloading menu tree")
+        gopher_urls = crawl(root_gurl, config)
+        gopher_files = get_files(gopher_urls)
+        gopher_menus = get_menus(gopher_urls)
+
+        if config.no_save_menu:
+            gopher_menus = []
+
+        if config.only_save_menu:
+            gopher_files = []
+
+        if gopher_urls == []:
+            print(":: Nothing to download")
+            return
+
+        if len(gopher_menus) > 0:
+            print(":: Downloading {} menus".format(len(gopher_menus)))
+            download_gopher_urls(gopher_menus, config)
+
+        if len(gopher_files) > 0:
+            print(":: Downloading {} files".format(len(gopher_files)))
+            download_gopher_urls(gopher_files, config)
+
+    else: 
+        # Single file download
+        print(":: Downloading single file ")
+        print(root_gurl.to_file_path())
+        write_gopherurl(root_gurl, config)
+
 
 def main():
 
     optlist, args = ([], [])
-
     try:
         optlist, args = getopt.getopt(sys.argv[1:], Config.getopt_spec)
     except getopt.GetoptError:
@@ -351,34 +403,7 @@ def main():
 
     for host in hosts:
         try:
-            def probably_a_menu(path):
-                # hueristic: probably a menu if there's no file extension or ends in /
-                end = path.split("/")[-1]
-                return not "." in end or path[-1] == '/'
-
-            host, port, path = spliturl(host)
-            root_gurl_type = "1" if probably_a_menu(path) else "0"
-            root_gurl = GopherURL(root_gurl_type, "[ROOT URL]", path, host, port)
-            debug("root_gurl: {}".format(root_gurl), config)
-
-            if config.recursive:
-                # Recursive download
-                print(":: Downloading menu tree")
-                gopher_urls = crawl(root_gurl, config)
-
-                if not config.only_save_menu and len(gopher_urls) > 0:
-                    print(":: Downloading {} files".format(len(gopher_urls)))
-                    for i in range(len(gopher_urls)):
-                        gurl = gopher_urls[i]
-                        print("[{}/{}] {}".format((i + 1), len(gopher_urls), gurl.to_file_path()))
-                        write_gopherurl(gurl, config)
-
-            else: 
-                # Single file download
-                print(":: Downloading single file ")
-                print(root_gurl.to_file_path())
-                write_gopherurl(root_gurl, config)
-
+            gopherdl(host, config)
         except ValueError as e:
             print(e)
 
