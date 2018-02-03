@@ -1,8 +1,12 @@
-import Network.Socket
---import Network.Socket.ByteString
+import Network.Socket (connect, socket, Socket, SockAddr, 
+                       Family(AF_INET), SocketType(Stream),
+                       inet_addr, SockAddr(SockAddrInet))
+--import Data.Bits.Utils (w82c)
+import qualified Network.Socket.ByteString
 import Control.Exception
-import Data.List
 import qualified Data.ByteString.Char8 as Bs
+import Data.List
+--import qualified Data.ByteString as Bs
 import System.Console.GetOpt (OptDescr(Option),
                               ArgDescr(NoArg, ReqArg),
                               getOpt,
@@ -13,24 +17,9 @@ catchConnect ::  Socket -> SomeException -> IO String
 catchConnect sock e =
   return $ "cantConnect: " ++ (show sock) ++ " \n >>> " ++ (show e)
 
---gopherRequest = 
-
-{-
-"-r" : "Enable recursive downloads",
-"-l [depth]" : "Maximum depth in recursive downloads (default none)",
-"-s" : "Span hosts on recursive downloads",
-"-h" : "Show this help",
-"-c" : "Enable file clobbering (overwrite existing)",
-"-m" : "Only download gopher menus",
-"-n" : "Never download gopher menus",
-"-p" : "Allow ascension to the parent directories",
-"-w [seconds]" : "Delay between downloads",
-"-d" : "Enable debug messages",
-"-A" : "Accept URL regex",
-"-R" : "Reject URL regex",
-"-M" : "Apply accept/reject regex rules to menus (can prevent recursion)"
--}
-
+putByteStrLn = Bs.putStrLn
+recv = Network.Socket.ByteString.recv
+sendAll = Network.Socket.ByteString.sendAll
 
 data Flag = 
       Recursive
@@ -57,8 +46,6 @@ data Options = Options
   , flagDebug :: Bool 
   } deriving (Show)
 
---options :: [Opts.OptDescr a]
-
 argDelay :: String -> Flag
 argDelay delay =
   (Delay (read delay::Float))
@@ -68,16 +55,16 @@ argMaxDepth depth =
   (MaxDepth (read depth::Int))
 
 options = 
-  [ Option "r" [] (NoArg Recursive) "Enable recursive downloads",
-    Option "l" [] (ReqArg argMaxDepth "Int") "Maximum depth in recursive downloads",
-    Option "s" [] (NoArg SpanHosts) "Span hosts on recursive downloads",
-    Option "h" [] (NoArg Help) "Show this help",
-    Option "c" [] (NoArg Clobber) "Enable file clobbering (overwrite existing)",
-    Option "m" [] (NoArg OnlyMenus) "Only download gopher menus",
-    Option "n" [] (NoArg NoMenus) "Never download gopher menus",
-    Option "p" [] (NoArg AscendParent) "Allow ascension to the parent directories",
-    Option "w" [] (ReqArg argDelay "Seconds") "Delay between downloads",
-    Option "d" [] (NoArg FlagDebug) "Enable debug messages" ]
+  [ Option "r" [] (NoArg Recursive) "Enable recursive downloads"
+  , Option "l" [] (ReqArg argMaxDepth "Int") "Maximum depth in recursive downloads"
+  , Option "s" [] (NoArg SpanHosts) "Span hosts on recursive downloads"
+  , Option "h" [] (NoArg Help) "Show this help"
+  , Option "c" [] (NoArg Clobber) "Enable file clobbering (overwrite existing)"
+  , Option "m" [] (NoArg OnlyMenus) "Only download gopher menus"
+  , Option "n" [] (NoArg NoMenus) "Never download gopher menus"
+  , Option "p" [] (NoArg AscendParent) "Allow ascension to the parent directories"
+  , Option "w" [] (ReqArg argDelay "Seconds") "Delay between downloads"
+  , Option "d" [] (NoArg FlagDebug) "Enable debug messages" ]
 
 isMaxDepth (MaxDepth _) = True
 isMaxDepth otherwise = False
@@ -88,12 +75,12 @@ isDelay otherwise = False
 findMaxDepth def opts =
   case (find isMaxDepth opts) of
     Just (MaxDepth d) -> d
-    otherwise -> def
+    _ -> def
 
 findDelay def opts =
   case (find isDelay opts) of
     Just (Delay d) -> d
-    otherwise -> def
+    _ -> def
 
 optionsFromFlags :: ([Flag], [String], [String]) -> IO ([String], Options)
 optionsFromFlags (options, arguments, errors) = 
@@ -110,18 +97,40 @@ optionsFromFlags (options, arguments, errors) =
                    , ascendParent = has AscendParent
                    , delay = findDelay 0.0 options
                    , flagDebug = has FlagDebug })
-  where 
-
 
 --  putStrLn $ (unlines $ ((map show options) ++ (map ("[arg] "++) arguments)))
-
 printStuff (options, arguments, errors) = 
   putStrLn $ (unlines $ ((map show options) ++ (map ("[arg] "++) arguments)))
+
+recvAll :: Socket -> IO Bs.ByteString
+recvAll sock = 
+  recv sock 4096
+  >>= (\bytes -> recvMore bytes)
+  where 
+    recvMore bytes =
+      if (Bs.length bytes) == 0 
+      then return bytes 
+      else (recvAll sock) 
+           >>= return . Bs.append bytes 
+
+appendCRLF :: Bs.ByteString -> Bs.ByteString
+appendCRLF bs =
+  Bs.snoc (Bs.snoc bs '\r') '\n'
+
+gopherGet :: SockAddr -> Bs.ByteString -> IO ()
+gopherGet addr path =
+  socket AF_INET Stream 0
+  >>= (\s -> connect s addr >> return s)
+  >>= (\s -> sendAll s (appendCRLF path) >> return s)
+  >>= recvAll
+  >>= putByteStrLn
 
 main = do
   argv <- Env.getArgs
   (args, options) <- optionsFromFlags (getOpt RequireOrder options argv)
   putStrLn $ show options
+  hostaddr <- inet_addr "66.166.122.165"
+  gopherGet (SockAddrInet 70 hostaddr) (Bs.pack "/")
   -- putStrLn args
   {-socket AF_INET Stream 0
   >>= (\sock -> (catch (recv sock 10) (catchConnect sock)))
