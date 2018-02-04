@@ -17,7 +17,7 @@ sendAll = BsNet.sendAll
 type ByteString = C.ByteString
 
 -- type text \t path \t host \t port \r\n
-type MenuEntity = (Char, ByteString, ByteString, ByteString, ByteString)
+type MenuLine = (Char, ByteString, ByteString, ByteString, ByteString)
 -- host path port
 type GopherUrl = (String, String, String)
 
@@ -110,27 +110,27 @@ parseWithGetOpt argv = getOpt RequireOrder optionSpec argv
 {----- Menu Parsing -----}
 {------------------------}
 
-menuEntToUrl :: MenuEntity -> GopherUrl
-menuEntToUrl (_, _, path, host, port) =
+menuLineToUrl :: MenuLine -> GopherUrl
+menuLineToUrl (_, _, path, host, port) =
   (C.unpack host, C.unpack path, C.unpack port)
 
 urlToString :: GopherUrl -> String
 urlToString (host, path, port) =
   "gopher://" ++ host ++ ":" ++ port ++ path
 
-validPath :: Maybe MenuEntity -> Bool
+validPath :: Maybe MenuLine -> Bool
 validPath (Just (_, _, path, _, _)) = 
   (sLen path) /= 0 &&
   not (sStartsWith (strToUpper path) (C.pack "URL:"))
 
-parseMenu :: ByteString -> [MenuEntity]
+parseMenu :: ByteString -> [MenuLine]
 parseMenu rawMenu = 
   map fromJust $ filter valid $ map parseMenuLine lines
   where 
     lines = C.lines rawMenu
     valid line = isJust line && validPath line
 
-parseMenuLine :: ByteString -> Maybe MenuEntity
+parseMenuLine :: ByteString -> Maybe MenuLine
 parseMenuLine line = 
   case (strSplitAll "\t" line) of
     [t1, t2, t3, t4] -> Just $ parseToks t1 t2 t3 t4
@@ -175,16 +175,27 @@ sanitizePath path =
   let nonEmptyString = (/=) 0 . sLen in
   filter nonEmptyString $ strSplitAll "/" path
 
-toFilePath :: MenuEntity -> FilePath
-toFilePath (_type, text, path, host, port) =
+-- host path port
+urlToFilePath :: GopherUrl -> Bool -> FilePath
+urlToFilePath (host, path, port) isMenu = 
   joinPath $ 
-    [C.unpack host] 
-    ++ (map C.unpack (sanitizePath path))
-    ++ (if _type == '1' then ["gophermap"] else [])
+    [host] ++
+    (sanitizePath path) ++
+    (if isMenu then ["gophermap"] else [])
+
+-- type text \t path \t host \t port \r\n
+menuLineToFilePath :: MenuLine -> FilePath
+menuLineToFilePath ml =
+  urlToFilePath (menuLineToUrl ml) (typeOf ml == '1')
+  where 
+    typeOf (t,_,_,_,_) = t
 
 main =
   Env.getArgs 
   >>= main' . configFromGetOpt . parseWithGetOpt
+
+--save :: ByteString ->  -> 
+--save bs =
 
 main' :: ([String], Config) -> IO ()
 main' (args, conf) =
@@ -193,7 +204,7 @@ main' (args, conf) =
   else if (recursive conf) then
     putStrLn "Recursive!" >>
     gopherGetRaw ("gopher.floodgap.com", "/", "70")
-    >>= return . map toFilePath . parseMenu
+    >>= return . map menuLineToFilePath . parseMenu
     >>= debugLog conf >> return ()
   else
     gopherGetRaw ("gopher.floodgap.com", "/", "70")
