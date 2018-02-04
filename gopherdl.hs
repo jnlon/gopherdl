@@ -48,6 +48,12 @@ data Options = Options
 
 {- Argv Parsing -}
 
+debugLog :: Show a => Options -> a -> IO a
+debugLog opts a =
+  (if flagDebug opts
+    then putStrLn $ ("DEBUG: " ++ show a)
+    else return ()) >> return a
+
 argDelay :: String -> Flag
 argDelay delay =
   (Delay (read delay::Float))
@@ -172,4 +178,5 @@ main' (args, opts) =
     putStr $ usageInfo "Usage:" optionSpec
   else
     gopherGetRaw ("gopher.floodgap.com", "/", "70")
-    >>= putStrLn . show . parseMenu
+    >>= debugLog opts >> return ()
+--  >>= putStrLn . show . parseMenu
