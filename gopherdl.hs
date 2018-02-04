@@ -1,4 +1,6 @@
 import Data.List
+import Data.Strings
+import Data.Maybe
 import Network.Socket
 import Control.Exception
 import qualified System.Environment as Env
@@ -13,6 +15,9 @@ putByteStrLn = Bs.putStrLn
 sendAll = BsNet.sendAll
 type ByteString = Bs.ByteString
 
+-- type text \t path \t host \t port \r\n
+type MenuEntity = (Char, ByteString, ByteString, ByteString, ByteString)
+
 data Flag = 
       Recursive
     | MaxDepth Int
@@ -26,7 +31,7 @@ data Flag =
     | FlagDebug deriving (Show, Eq)
 
 data Options = Options
- { recursive :: Bool
+ {  recursive :: Bool
   , maxDepth :: Int
   , spanHosts :: Bool
   , help :: Bool
@@ -37,6 +42,9 @@ data Options = Options
   , delay :: Float
   , flagDebug :: Bool 
   } deriving (Show)
+
+
+{- Argv Parsing -}
 
 argDelay :: String -> Flag
 argDelay delay =
@@ -90,6 +98,33 @@ optionsFromFlags (options, arguments, errors) =
   where 
     has opt = opt `elem` options 
 
+{- Menu Parsing -}
+
+parseMenuLine :: ByteString -> Maybe MenuEntity
+parseMenuLine line = 
+  case (strSplitAll "\t" line) of
+    [t1, t2, t3, t4] -> Just $ parseToks t1 t2 t3 t4
+    _ -> Nothing
+  where
+    parseToks front path host port =
+      ( (strHead front)   -- Type
+      , (strDrop 1 front) -- User Text
+      , (strTrim path)
+      , (strTrim host)
+      , (strTrim port) )
+
+hasPath :: Maybe MenuEntity -> Bool
+hasPath (Just (_, _, path, _, _)) = (Bs.length path) /= 0
+hasPath _ = False
+
+parseMenu :: ByteString -> [Maybe MenuEntity]
+parseMenu rawMenu = 
+  filter valid $ map parseMenuLine $ Bs.lines rawMenu
+  where 
+    valid line = isJust line && hasPath line
+
+{- Network IO -}
+
 recvAll :: Socket -> IO ByteString
 recvAll sock = 
   BsNet.recv sock 4096 >>= recvMore
@@ -105,7 +140,7 @@ appendCRLF bs = Bs.append bs $ Bs.pack "\r\n"
 addrInfoHints :: AddrInfo
 addrInfoHints = defaultHints { addrSocketType = Stream }
 
-gopherGet :: HostName -> String -> String -> IO ()
+gopherGet :: HostName -> String -> String -> IO ByteString
 gopherGet host port path =
   getAddrInfo (Just addrInfoHints) (Just host) (Just port)
   >>= return . addrAddress . head 
@@ -113,10 +148,12 @@ gopherGet host port path =
     >>= \sock -> connect sock addr
       >> sendAll sock (appendCRLF $ Bs.pack path)
       >> recvAll sock
-      >>= putByteStrLn
+--      >> recvAll sock
+--      >>= putByteStrLn
 
 main = do
   argv <- Env.getArgs
-  (args, options) <- optionsFromFlags (getOpt RequireOrder options argv)
-  putStrLn $ show options
+  (args, opts) <- optionsFromFlags (getOpt RequireOrder options argv)
+  putStrLn $ show opts
   gopherGet "gopher.floodgap.com" "70" "/"
+  >>= putStrLn . show . parseMenu
