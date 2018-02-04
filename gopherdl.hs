@@ -12,7 +12,6 @@ import System.Console.GetOpt (OptDescr(Option),
                               ArgOrder(RequireOrder),
                               usageInfo)
 
-putByteStrLn = Bs.putStrLn
 sendAll = BsNet.sendAll
 type ByteString = Bs.ByteString
 
@@ -46,7 +45,9 @@ data Options = Options
   , flagDebug :: Bool 
   } deriving (Show)
 
-{- Argv Parsing -}
+{--------------------------}
+{------ Argv Parsing ------}
+{--------------------------}
 
 debugLog :: Show a => Options -> a -> IO a
 debugLog opts a =
@@ -106,7 +107,9 @@ optionsFromFlags (options, arguments, errors) =
   where 
     has opt = opt `elem` options 
 
-{- Menu Parsing -}
+{------------------------}
+{----- Menu Parsing -----}
+{------------------------}
 
 menuEntToUrl :: MenuEntity -> GopherUrl
 menuEntToUrl (_, _, path, host, port) =
@@ -139,7 +142,9 @@ parseMenu rawMenu =
   where 
     valid line = isJust line && hasNonEmptyPath line
 
-{- Network IO -}
+{----------------------}
+{------ IO & main -----}
+{----------------------}
 
 recvAll :: Socket -> IO ByteString
 recvAll sock = 
@@ -165,12 +170,10 @@ gopherGetRaw (host, path, port) =
       >> sendAll sock (appendCRLF $ Bs.pack path)
       >> recvAll sock
 
-main = do
+main =
   Env.getArgs 
   >>= \argv -> optionsFromFlags (getOpt RequireOrder optionSpec argv)
   >>= main'
---  gopherGetRaw ("gopher.floodgap.com", "/", "70")
---  >>= putStrLn . show . parseMenu
 
 main' :: ([String], Options) -> IO ()
 main' (args, opts) =
