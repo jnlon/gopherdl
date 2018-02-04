@@ -100,6 +100,18 @@ optionsFromFlags (options, arguments, errors) =
 
 {- Menu Parsing -}
 
+-- type text \t path \t host \t port \r\n
+
+menuItemToUrl :: MenuEntity -> String
+menuItemToUrl (t,text,path,host,port) =
+  "gopher://" 
+   ++ (Bs.unpack $ (host <> col <> port <> path)) 
+   ++ typeStr
+  where 
+    (<>) a b = Bs.append a b
+    col = Bs.pack ":"
+    typeStr = " (" ++ [t] ++ ")"
+
 parseMenuLine :: ByteString -> Maybe MenuEntity
 parseMenuLine line = 
   case (strSplitAll "\t" line) of
@@ -113,15 +125,15 @@ parseMenuLine line =
       , (strTrim host)
       , (strTrim port) )
 
-hasPath :: Maybe MenuEntity -> Bool
-hasPath (Just (_, _, path, _, _)) = (Bs.length path) /= 0
-hasPath _ = False
+hasNonEmptyPath :: Maybe MenuEntity -> Bool
+hasNonEmptyPath (Just (_, _, path, _, _)) = (Bs.length path) /= 0
+hasNonEmptyPath _ = False
 
-parseMenu :: ByteString -> [Maybe MenuEntity]
+parseMenu :: ByteString -> [MenuEntity]
 parseMenu rawMenu = 
-  filter valid $ map parseMenuLine $ Bs.lines rawMenu
+  map fromJust $ filter valid $ map parseMenuLine $ Bs.lines rawMenu
   where 
-    valid line = isJust line && hasPath line
+    valid line = isJust line && hasNonEmptyPath line
 
 {- Network IO -}
 
@@ -148,8 +160,16 @@ gopherGet host port path =
     >>= \sock -> connect sock addr
       >> sendAll sock (appendCRLF $ Bs.pack path)
       >> recvAll sock
---      >> recvAll sock
---      >>= putByteStrLn
+
+gopherGetMenu :: MenuEntity -> IO (Maybe [MenuEntity])
+gopherGetMenu m = 
+  case m of
+    ('1', _, path, host, port) -> 
+      gopherGet (Bs.unpack host) (Bs.unpack port) (Bs.unpack path)
+      >>= return . Just . parseMenu 
+    (_, _, _, _, _) -> 
+      putStrLn ("Not a menu: " ++ (menuItemToUrl m))
+      >> return Nothing
 
 main = do
   argv <- Env.getArgs
