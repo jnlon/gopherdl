@@ -9,7 +9,8 @@ import qualified Data.ByteString.Char8 as Bs
 import System.Console.GetOpt (OptDescr(Option),
                               ArgDescr(NoArg, ReqArg),
                               getOpt,
-                              ArgOrder(RequireOrder))
+                              ArgOrder(RequireOrder),
+                              usageInfo)
 
 putByteStrLn = Bs.putStrLn
 sendAll = BsNet.sendAll
@@ -55,9 +56,9 @@ argMaxDepth :: String -> Flag
 argMaxDepth depth =
   (MaxDepth (read depth::Int))
 
-options = 
+optionSpec = 
   [ Option "r" [] (NoArg Recursive) "Enable recursive downloads"
-  , Option "l" [] (ReqArg argMaxDepth "Int") "Maximum depth in recursive downloads"
+  , Option "l" [] (ReqArg argMaxDepth "int") "Maximum depth in recursive downloads"
   , Option "s" [] (NoArg SpanHosts) "Span hosts on recursive downloads"
   , Option "h" [] (NoArg Help) "Show this help"
   , Option "c" [] (NoArg Clobber) "Enable file clobbering (overwrite existing)"
@@ -159,8 +160,16 @@ gopherGetRaw (host, path, port) =
       >> recvAll sock
 
 main = do
-  argv <- Env.getArgs
-  (args, opts) <- optionsFromFlags (getOpt RequireOrder options argv)
-  putStrLn $ show opts
-  gopherGetRaw ("gopher.floodgap.com", "/", "70")
-  >>= putStrLn . show . parseMenu
+  Env.getArgs 
+  >>= \argv -> optionsFromFlags (getOpt RequireOrder optionSpec argv)
+  >>= main'
+--  gopherGetRaw ("gopher.floodgap.com", "/", "70")
+--  >>= putStrLn . show . parseMenu
+
+main' :: ([String], Options) -> IO ()
+main' (args, opts) =
+  if (help opts) then
+    putStr $ usageInfo "Usage:" optionSpec
+  else
+    gopherGetRaw ("gopher.floodgap.com", "/", "70")
+    >>= putStrLn . show . parseMenu
