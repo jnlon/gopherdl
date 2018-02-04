@@ -184,18 +184,25 @@ urlToFilePath (host, path, port) isMenu =
     (if isMenu then ["gophermap"] else [])
 
 -- type text \t path \t host \t port \r\n
-menuLineToFilePath :: MenuLine -> FilePath
-menuLineToFilePath ml =
-  urlToFilePath (menuLineToUrl ml) (typeOf ml == '1')
-  where 
-    typeOf (t,_,_,_,_) = t
+
+isMenuMenuLine :: MenuLine -> Bool
+isMenuMenuLine (t,_,_,_,_) = t == '1'
 
 main =
   Env.getArgs 
   >>= main' . configFromGetOpt . parseWithGetOpt
 
---save :: ByteString ->  -> 
---save bs =
+save :: ByteString -> GopherUrl -> Bool -> Config -> IO ()
+save bs url isMenu conf =
+  C.writeFile (urlToFilePath url isMenu) bs
+
+saveMenuLine :: ByteString -> MenuLine -> Config -> IO ()
+saveMenuLine bs ml conf = 
+  save bs (menuLineToUrl ml) (isMenuMenuLine ml) conf
+
+gopherGetMenu :: GopherUrl -> IO [MenuLine]
+gopherGetMenu url = 
+    gopherGetRaw url >>= return . parseMenu
 
 main' :: ([String], Config) -> IO ()
 main' (args, conf) =
@@ -204,8 +211,8 @@ main' (args, conf) =
   else if (recursive conf) then
     putStrLn "Recursive!" >>
     gopherGetRaw ("gopher.floodgap.com", "/", "70")
-    >>= return . map menuLineToFilePath . parseMenu
+    >>= return . parseMenu
     >>= debugLog conf >> return ()
   else
-    gopherGetRaw ("gopher.floodgap.com", "/", "70")
+    gopherGetMenu ("gopher.floodgap.com", "/", "70")
     >>= debugLog conf >> return ()
