@@ -33,6 +33,11 @@ data Flag =
     | Delay Float
     | FlagDebug deriving (Show, Eq)
 
+data GetFileKinds =
+    GetAll
+  | GetOnlyFiles
+  | GetOnlyMenus
+
 data Config = Config
  {  recursive :: Bool
   , maxDepth :: Int
@@ -46,15 +51,37 @@ data Config = Config
   , flagDebug :: Bool 
   } deriving (Show)
 
-{--------------------------}
-{------ Argv Parsing ------}
-{--------------------------}
+{---------------------}
+{------ Helpers ------}
+{---------------------}
 
 debugLog :: Show a => Config -> a -> IO a
 debugLog conf a =
   (if flagDebug conf
     then putStrLn $ ("DEBUG: " ++ show a)
     else return ()) >> return a
+
+recvAll :: Socket -> IO ByteString
+recvAll sock = 
+  BsNet.recv sock 4096 >>= recvMore
+  where 
+    recvMore bytes =
+      if (C.length bytes) == 0 
+        then return bytes 
+        else recvAll sock >>= return . C.append bytes 
+
+appendCRLF :: ByteString -> ByteString
+appendCRLF bs = C.append bs $ C.pack "\r\n"
+
+addrInfoHints :: AddrInfo
+addrInfoHints = defaultHints { addrSocketType = Stream }
+
+isMenuMenuLine :: MenuLine -> Bool
+isMenuMenuLine (t,_,_,_,_) = t == '1'
+
+{--------------------------}
+{------ Argv Parsing ------}
+{--------------------------}
 
 optionSpec = 
   let argMaxDepth depth = (MaxDepth (read depth::Int)) 
@@ -147,21 +174,6 @@ parseMenuLine line =
 {------ IO & main -----}
 {----------------------}
 
-recvAll :: Socket -> IO ByteString
-recvAll sock = 
-  BsNet.recv sock 4096 >>= recvMore
-  where 
-    recvMore bytes =
-      if (C.length bytes) == 0 
-        then return bytes 
-        else recvAll sock >>= return . C.append bytes 
-
-appendCRLF :: ByteString -> ByteString
-appendCRLF bs = C.append bs $ C.pack "\r\n"
-
-addrInfoHints :: AddrInfo
-addrInfoHints = defaultHints { addrSocketType = Stream }
-
 gopherGetRaw :: GopherUrl -> IO ByteString
 gopherGetRaw (host, path, port) =
   getAddrInfo (Just addrInfoHints) (Just host) (Just port)
@@ -183,11 +195,6 @@ urlToFilePath (host, path, port) isMenu =
     (sanitizePath path) ++
     (if isMenu then ["gophermap"] else [])
 
--- type text \t path \t host \t port \r\n
-
-isMenuMenuLine :: MenuLine -> Bool
-isMenuMenuLine (t,_,_,_,_) = t == '1'
-
 main =
   Env.getArgs 
   >>= main' . configFromGetOpt . parseWithGetOpt
@@ -196,22 +203,45 @@ save :: ByteString -> GopherUrl -> Bool -> Config -> IO ()
 save bs url isMenu conf =
   C.writeFile (urlToFilePath url isMenu) bs
 
-saveMenuLine :: ByteString -> MenuLine -> Config -> IO ()
-saveMenuLine bs ml conf = 
+saveFromMenuLine :: ByteString -> MenuLine -> Config -> IO ()
+saveFromMenuLine bs ml conf = 
   save bs (menuLineToUrl ml) (isMenuMenuLine ml) conf
 
 gopherGetMenu :: GopherUrl -> IO [MenuLine]
 gopherGetMenu url = 
-    gopherGetRaw url >>= return . parseMenu
+  gopherGetRaw url >>= return . parseMenu
+
+recursiveSave :: [MenuLine] -> GetFileKinds -> Int -> Config -> IO ()
+recursiveSave lines getKinds depthLeft conf =
+  if (depthLeft == 0) || (lines == [])
+    then return ()
+    else mapM_ get lines
+  where
+    {- TODO Use case to come up with filter function for lines -}
+    getAll line = return ()
+    getFiles line = return ()
+    getMenus line = return ()
+    get line = 
+      case getKinds of
+        GetAll -> getAll line
+        GetOnlyFiles -> getFiles line
+        GetOnlyMenus -> getMenus line
+      
+      {-
+      if (isMenu line) then 
+        gopherGetMenu (menuLineToUrl line)
+        >>= 
+        >>= \ents ->
+        saveMenuFromLine gopherGetMenu
+      else -}
 
 main' :: ([String], Config) -> IO ()
 main' (args, conf) =
-  if (help conf) then
-    putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
+  if (help conf) || (length args) == 0 
+    then putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
   else if (recursive conf) then
     putStrLn "Recursive!" >>
-    gopherGetRaw ("gopher.floodgap.com", "/", "70")
-    >>= return . parseMenu
+    gopherGetMenu ("gopher.floodgap.com", "/", "70")
     >>= debugLog conf >> return ()
   else
     gopherGetMenu ("gopher.floodgap.com", "/", "70")
