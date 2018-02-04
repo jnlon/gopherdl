@@ -33,7 +33,7 @@ data Flag =
     | Delay Float
     | FlagDebug deriving (Show, Eq)
 
-data Options = Options
+data Config = Config
  {  recursive :: Bool
   , maxDepth :: Int
   , spanHosts :: Bool
@@ -50,30 +50,25 @@ data Options = Options
 {------ Argv Parsing ------}
 {--------------------------}
 
-debugLog :: Show a => Options -> a -> IO a
-debugLog opts a =
-  (if flagDebug opts
+debugLog :: Show a => Config -> a -> IO a
+debugLog conf a =
+  (if flagDebug conf
     then putStrLn $ ("DEBUG: " ++ show a)
     else return ()) >> return a
 
-argDelay :: String -> Flag
-argDelay delay =
-  (Delay (read delay::Float))
-
-argMaxDepth :: String -> Flag
-argMaxDepth depth =
-  (MaxDepth (read depth::Int))
-
 optionSpec = 
+  let argMaxDepth depth = (MaxDepth (read depth::Int)) 
+      argDelay delay = (Delay (read delay::Float)) 
+  in
   [ Option "r" [] (NoArg Recursive) "Enable recursive downloads"
-  , Option "l" [] (ReqArg argMaxDepth "int") "Maximum depth in recursive downloads"
+  , Option "l" [] (ReqArg argMaxDepth "n") "Maximum depth in recursive downloads"
   , Option "s" [] (NoArg SpanHosts) "Span hosts on recursive downloads"
   , Option "h" [] (NoArg Help) "Show this help"
   , Option "c" [] (NoArg Clobber) "Enable file clobbering (overwrite existing)"
   , Option "m" [] (NoArg OnlyMenus) "Only download gopher menus"
   , Option "n" [] (NoArg NoMenus) "Never download gopher menus"
   , Option "p" [] (NoArg AscendParent) "Allow ascension to the parent directories"
-  , Option "w" [] (ReqArg argDelay "Seconds") "Delay between downloads"
+  , Option "w" [] (ReqArg argDelay "secs") "Delay between downloads"
   , Option "d" [] (NoArg FlagDebug) "Enable debug messages" ]
 
 isMaxDepth (MaxDepth _) = True
@@ -82,31 +77,34 @@ isMaxDepth otherwise = False
 isDelay (Delay _) = True
 isDelay otherwise = False
 
-findMaxDepth def opts =
-  case (find isMaxDepth opts) of
+findMaxDepth def options =
+  case (find isMaxDepth options) of
     Just (MaxDepth d) -> d
     _ -> def
 
-findDelay def opts =
-  case (find isDelay opts) of
+findDelay def options =
+  case (find isDelay options) of
     Just (Delay d) -> d
     _ -> def
 
-optionsFromFlags :: ([Flag], [String], [String]) -> IO ([String], Options)
-optionsFromFlags (options, arguments, errors) = 
-  return ( arguments, 
-           Options { recursive = has Recursive
-                   , maxDepth = findMaxDepth 99 options
-                   , spanHosts = has SpanHosts
-                   , help = has Help
-                   , clobber = has Clobber
-                   , onlyMenus = has OnlyMenus
-                   , noMenus = has NoMenus
-                   , ascendParent = has AscendParent
-                   , delay = findDelay 0.0 options
-                   , flagDebug = has FlagDebug })
+configFromGetOpt :: ([Flag], [String], [String]) -> ([String], Config)
+configFromGetOpt (options, arguments, errors) = 
+  ( arguments, 
+    Config { recursive = has Recursive
+           , maxDepth = findMaxDepth 99 options
+           , spanHosts = has SpanHosts
+           , help = has Help
+           , clobber = has Clobber
+           , onlyMenus = has OnlyMenus
+           , noMenus = has NoMenus
+           , ascendParent = has AscendParent
+           , delay = findDelay 0.0 options
+           , flagDebug = has FlagDebug })
   where 
     has opt = opt `elem` options 
+
+parseWithGetOpt :: [String] -> ([Flag], [String], [String])
+parseWithGetOpt argv = getOpt RequireOrder optionSpec argv
 
 {------------------------}
 {----- Menu Parsing -----}
@@ -174,9 +172,8 @@ gopherGetRaw (host, path, port) =
       >> recvAll sock
 
 sanitizePath path = 
+  let nonEmptyString = (/=) 0 . sLen in
   filter nonEmptyString $ strSplitAll "/" path
-  where
-    nonEmptyString = (/=) 0 . sLen
 
 toFilePath :: MenuEntity -> FilePath
 toFilePath (_type, text, path, host, port) =
@@ -187,19 +184,17 @@ toFilePath (_type, text, path, host, port) =
 
 main =
   Env.getArgs 
-  >>= \argv -> optionsFromFlags (getOpt RequireOrder optionSpec argv)
-  >>= main'
+  >>= main' . configFromGetOpt . parseWithGetOpt
 
-main' :: ([String], Options) -> IO ()
-main' (args, opts) =
-  if (help opts) then
-    putStr $ usageInfo "Usage:" optionSpec
-  else if (recursive opts) then
+main' :: ([String], Config) -> IO ()
+main' (args, conf) =
+  if (help conf) then
+    putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
+  else if (recursive conf) then
     putStrLn "Recursive!" >>
     gopherGetRaw ("gopher.floodgap.com", "/", "70")
     >>= return . map toFilePath . parseMenu
-    >>= debugLog opts >> return ()
---    >>= 
+    >>= debugLog conf >> return ()
   else
     gopherGetRaw ("gopher.floodgap.com", "/", "70")
-    >>= debugLog opts >> return ()
+    >>= debugLog conf >> return ()
