@@ -1,11 +1,12 @@
 import Data.List
-import Data.Strings
 import Data.Maybe
+import Data.Strings
 import Network.Socket
 import Control.Exception
+import System.FilePath.Posix
 import qualified System.Environment as Env
 import qualified Network.Socket.ByteString as BsNet
-import qualified Data.ByteString.Char8 as Bs
+import qualified Data.ByteString.Char8 as C
 import System.Console.GetOpt (OptDescr(Option),
                               ArgDescr(NoArg, ReqArg),
                               getOpt,
@@ -13,7 +14,7 @@ import System.Console.GetOpt (OptDescr(Option),
                               usageInfo)
 
 sendAll = BsNet.sendAll
-type ByteString = Bs.ByteString
+type ByteString = C.ByteString
 
 -- type text \t path \t host \t port \r\n
 type MenuEntity = (Char, ByteString, ByteString, ByteString, ByteString)
@@ -113,11 +114,23 @@ optionsFromFlags (options, arguments, errors) =
 
 menuEntToUrl :: MenuEntity -> GopherUrl
 menuEntToUrl (_, _, path, host, port) =
-  (Bs.unpack host, Bs.unpack path, Bs.unpack port)
+  (C.unpack host, C.unpack path, C.unpack port)
 
 urlToString :: GopherUrl -> String
 urlToString (host, path, port) =
   "gopher://" ++ host ++ ":" ++ port ++ path
+
+validPath :: Maybe MenuEntity -> Bool
+validPath (Just (_, _, path, _, _)) = 
+  (sLen path) /= 0 &&
+  not (sStartsWith (strToUpper path) (C.pack "URL:"))
+
+parseMenu :: ByteString -> [MenuEntity]
+parseMenu rawMenu = 
+  map fromJust $ filter valid $ map parseMenuLine lines
+  where 
+    lines = C.lines rawMenu
+    valid line = isJust line && validPath line
 
 parseMenuLine :: ByteString -> Maybe MenuEntity
 parseMenuLine line = 
@@ -132,16 +145,6 @@ parseMenuLine line =
       , (strTrim host)
       , (strTrim port) )
 
-hasNonEmptyPath :: Maybe MenuEntity -> Bool
-hasNonEmptyPath (Just (_, _, path, _, _)) = (Bs.length path) /= 0
-hasNonEmptyPath _ = False
-
-parseMenu :: ByteString -> [MenuEntity]
-parseMenu rawMenu = 
-  map fromJust $ filter valid $ map parseMenuLine $ Bs.lines rawMenu
-  where 
-    valid line = isJust line && hasNonEmptyPath line
-
 {----------------------}
 {------ IO & main -----}
 {----------------------}
@@ -151,12 +154,12 @@ recvAll sock =
   BsNet.recv sock 4096 >>= recvMore
   where 
     recvMore bytes =
-      if (Bs.length bytes) == 0 
+      if (C.length bytes) == 0 
         then return bytes 
-        else recvAll sock >>= return . Bs.append bytes 
+        else recvAll sock >>= return . C.append bytes 
 
 appendCRLF :: ByteString -> ByteString
-appendCRLF bs = Bs.append bs $ Bs.pack "\r\n"
+appendCRLF bs = C.append bs $ C.pack "\r\n"
 
 addrInfoHints :: AddrInfo
 addrInfoHints = defaultHints { addrSocketType = Stream }
@@ -167,8 +170,20 @@ gopherGetRaw (host, path, port) =
   >>= return . addrAddress . head 
   >>= \addr -> socket AF_INET Stream 0 
     >>= \sock -> connect sock addr
-      >> sendAll sock (appendCRLF $ Bs.pack path)
+      >> sendAll sock (appendCRLF $ C.pack path)
       >> recvAll sock
+
+sanitizePath path = 
+  filter nonEmptyString $ strSplitAll "/" path
+  where
+    nonEmptyString = (/=) 0 . sLen
+
+toFilePath :: MenuEntity -> FilePath
+toFilePath (_type, text, path, host, port) =
+  joinPath $ 
+    [C.unpack host] 
+    ++ (map C.unpack (sanitizePath path))
+    ++ (if _type == '1' then ["gophermap"] else [])
 
 main =
   Env.getArgs 
@@ -179,7 +194,12 @@ main' :: ([String], Options) -> IO ()
 main' (args, opts) =
   if (help opts) then
     putStr $ usageInfo "Usage:" optionSpec
+  else if (recursive opts) then
+    putStrLn "Recursive!" >>
+    gopherGetRaw ("gopher.floodgap.com", "/", "70")
+    >>= return . map toFilePath . parseMenu
+    >>= debugLog opts >> return ()
+--    >>= 
   else
     gopherGetRaw ("gopher.floodgap.com", "/", "70")
     >>= debugLog opts >> return ()
---  >>= putStrLn . show . parseMenu
