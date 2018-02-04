@@ -17,6 +17,8 @@ type ByteString = Bs.ByteString
 
 -- type text \t path \t host \t port \r\n
 type MenuEntity = (Char, ByteString, ByteString, ByteString, ByteString)
+-- host path port
+type GopherUrl = (String, String, String)
 
 data Flag = 
       Recursive
@@ -42,7 +44,6 @@ data Options = Options
   , delay :: Float
   , flagDebug :: Bool 
   } deriving (Show)
-
 
 {- Argv Parsing -}
 
@@ -100,17 +101,13 @@ optionsFromFlags (options, arguments, errors) =
 
 {- Menu Parsing -}
 
--- type text \t path \t host \t port \r\n
+menuEntToUrl :: MenuEntity -> GopherUrl
+menuEntToUrl (_, _, path, host, port) =
+  (Bs.unpack host, Bs.unpack path, Bs.unpack port)
 
-menuItemToUrl :: MenuEntity -> String
-menuItemToUrl (t,text,path,host,port) =
-  "gopher://" 
-   ++ (Bs.unpack $ (host <> col <> port <> path)) 
-   ++ typeStr
-  where 
-    (<>) a b = Bs.append a b
-    col = Bs.pack ":"
-    typeStr = " (" ++ [t] ++ ")"
+urlToString :: GopherUrl -> String
+urlToString (host, path, port) =
+  "gopher://" ++ host ++ ":" ++ port ++ path
 
 parseMenuLine :: ByteString -> Maybe MenuEntity
 parseMenuLine line = 
@@ -152,8 +149,8 @@ appendCRLF bs = Bs.append bs $ Bs.pack "\r\n"
 addrInfoHints :: AddrInfo
 addrInfoHints = defaultHints { addrSocketType = Stream }
 
-gopherGet :: HostName -> String -> String -> IO ByteString
-gopherGet host port path =
+gopherGetRaw :: GopherUrl -> IO ByteString
+gopherGetRaw (host, path, port) =
   getAddrInfo (Just addrInfoHints) (Just host) (Just port)
   >>= return . addrAddress . head 
   >>= \addr -> socket AF_INET Stream 0 
@@ -161,19 +158,9 @@ gopherGet host port path =
       >> sendAll sock (appendCRLF $ Bs.pack path)
       >> recvAll sock
 
-gopherGetMenu :: MenuEntity -> IO (Maybe [MenuEntity])
-gopherGetMenu m = 
-  case m of
-    ('1', _, path, host, port) -> 
-      gopherGet (Bs.unpack host) (Bs.unpack port) (Bs.unpack path)
-      >>= return . Just . parseMenu 
-    (_, _, _, _, _) -> 
-      putStrLn ("Not a menu: " ++ (menuItemToUrl m))
-      >> return Nothing
-
 main = do
   argv <- Env.getArgs
   (args, opts) <- optionsFromFlags (getOpt RequireOrder options argv)
   putStrLn $ show opts
-  gopherGet "gopher.floodgap.com" "70" "/"
+  gopherGetRaw ("gopher.floodgap.com", "/", "70")
   >>= putStrLn . show . parseMenu
