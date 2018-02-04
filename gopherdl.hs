@@ -1,25 +1,17 @@
-import Network.Socket (connect, socket, Socket, SockAddr, 
-                       Family(AF_INET), SocketType(Stream),
-                       inet_addr, SockAddr(SockAddrInet))
---import Data.Bits.Utils (w82c)
-import qualified Network.Socket.ByteString
-import Control.Exception
-import qualified Data.ByteString.Char8 as Bs
 import Data.List
---import qualified Data.ByteString as Bs
+import Network.Socket
+import Control.Exception
+import qualified System.Environment as Env
+import qualified Network.Socket.ByteString as BsNet
+import qualified Data.ByteString.Char8 as Bs
 import System.Console.GetOpt (OptDescr(Option),
                               ArgDescr(NoArg, ReqArg),
                               getOpt,
                               ArgOrder(RequireOrder))
-import qualified System.Environment as Env
-
-catchConnect ::  Socket -> SomeException -> IO String
-catchConnect sock e =
-  return $ "cantConnect: " ++ (show sock) ++ " \n >>> " ++ (show e)
 
 putByteStrLn = Bs.putStrLn
-recv = Network.Socket.ByteString.recv
-sendAll = Network.Socket.ByteString.sendAll
+sendAll = BsNet.sendAll
+type ByteString = Bs.ByteString
 
 data Flag = 
       Recursive
@@ -84,8 +76,6 @@ findDelay def opts =
 
 optionsFromFlags :: ([Flag], [String], [String]) -> IO ([String], Options)
 optionsFromFlags (options, arguments, errors) = 
-  let has opt = opt `elem` options 
-  in
   return ( arguments, 
            Options { recursive = has Recursive
                    , maxDepth = findMaxDepth 99 options
@@ -97,41 +87,36 @@ optionsFromFlags (options, arguments, errors) =
                    , ascendParent = has AscendParent
                    , delay = findDelay 0.0 options
                    , flagDebug = has FlagDebug })
+  where 
+    has opt = opt `elem` options 
 
---  putStrLn $ (unlines $ ((map show options) ++ (map ("[arg] "++) arguments)))
-printStuff (options, arguments, errors) = 
-  putStrLn $ (unlines $ ((map show options) ++ (map ("[arg] "++) arguments)))
-
-recvAll :: Socket -> IO Bs.ByteString
+recvAll :: Socket -> IO ByteString
 recvAll sock = 
-  recv sock 4096
-  >>= (\bytes -> recvMore bytes)
+  BsNet.recv sock 4096 >>= recvMore
   where 
     recvMore bytes =
       if (Bs.length bytes) == 0 
-      then return bytes 
-      else (recvAll sock) 
-           >>= return . Bs.append bytes 
+        then return bytes 
+        else recvAll sock >>= return . Bs.append bytes 
 
-appendCRLF :: Bs.ByteString -> Bs.ByteString
-appendCRLF bs =
-  Bs.snoc (Bs.snoc bs '\r') '\n'
+appendCRLF :: ByteString -> ByteString
+appendCRLF bs = Bs.append bs $ Bs.pack "\r\n"
 
-gopherGet :: SockAddr -> Bs.ByteString -> IO ()
-gopherGet addr path =
-  socket AF_INET Stream 0
-  >>= (\s -> connect s addr >> return s)
-  >>= (\s -> sendAll s (appendCRLF path) >> return s)
-  >>= recvAll
-  >>= putByteStrLn
+addrInfoHints :: AddrInfo
+addrInfoHints = defaultHints { addrSocketType = Stream }
+
+gopherGet :: HostName -> String -> String -> IO ()
+gopherGet host port path =
+  getAddrInfo (Just addrInfoHints) (Just host) (Just port)
+  >>= return . addrAddress . head 
+  >>= \addr -> socket AF_INET Stream 0 
+    >>= \sock -> connect sock addr
+      >> sendAll sock (appendCRLF $ Bs.pack path)
+      >> recvAll sock
+      >>= putByteStrLn
 
 main = do
   argv <- Env.getArgs
   (args, options) <- optionsFromFlags (getOpt RequireOrder options argv)
   putStrLn $ show options
-  hostaddr <- inet_addr "66.166.122.165"
-  gopherGet (SockAddrInet 70 hostaddr) (Bs.pack "/")
-  -- putStrLn args
-  {-socket AF_INET Stream 0
-  >>= (\sock -> (catch (recv sock 10) (catchConnect sock)))
-  >>= Prelude.putStrLn-}
+  gopherGet "gopher.floodgap.com" "70" "/"
