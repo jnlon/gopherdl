@@ -21,7 +21,6 @@ import System.Console.GetOpt (OptDescr(Option),
 {- TODO
   - Function to read from socket while writing to a file? 
     - Will we run out of ram downloading a large file, or does lazyness help?
-  - 
 -}
 
 sendAll = BsNet.sendAll
@@ -163,21 +162,19 @@ urlToString :: GopherUrl -> String
 urlToString (host, path, port) =
   "gopher://" ++ host ++ ":" ++ port ++ path
 
-validLineData :: MenuLine -> Bool
-validLineData line = 
+validLine :: MenuLine -> Bool
+validLine line = 
   validPath line && validType line
   where 
     validPath (_, _, path, _, _) = 
       sStartsWith path (C.pack "/")
     validType (t, _, _, _, _) = 
-      not $ t `elem` ['7', '2', '3', '8', 'T']
+      t `notElem` ['7', '2', '3', '8', 'T']
 
 parseMenu :: ByteString -> [MenuLine]
 parseMenu rawMenu = 
   let lines = map parseMenuLine $ C.lines rawMenu in
-  pruneInvalid $ map fromJust $ filter isJust $ lines
-  where 
-    pruneInvalid = filter validLineData
+  filter validLine $ catMaybes $ lines
 
 parseMenuLine :: ByteString -> Maybe MenuLine
 parseMenuLine line = 
@@ -205,8 +202,6 @@ gopherGetRaw (host, path, port) =
       >> sendAll sock (appendCRLF $ C.pack path)
       >> recvAll sock
 
-
--- host path port
 urlToFilePath :: GopherUrl -> Bool -> FilePath
 urlToFilePath (host, path, port) isMenu = 
   joinPath $ 
