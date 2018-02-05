@@ -3,6 +3,7 @@ import Data.Maybe
 import Data.Strings
 import Network.Socket
 import Control.Exception
+import Control.Monad
 import System.IO
 import System.Directory (createDirectoryIfMissing)
 import Data.ByteString (hPut)
@@ -40,8 +41,7 @@ data Flag =
     | OnlyMenus
     | NoMenus
     | AscendParent
-    | Delay Float
-    | FlagDebug deriving (Show, Eq)
+    | Delay Float deriving (Show, Eq)
 
 data GetFileKinds =
     GetAll
@@ -58,16 +58,17 @@ data Config = Config
   , noMenus :: Bool
   , ascendParent :: Bool
   , delay :: Float
-  , flagDebug :: Bool 
   } deriving (Show)
 
 {---------------------}
 {------ Helpers ------}
 {---------------------}
 
-debugLog :: Show a => Config -> a -> IO a
-debugLog conf a =
-  (if flagDebug conf
+debug = True
+
+debugLog :: Show a => a -> IO a
+debugLog a =
+  (if debug
     then putStrLn $ ("DEBUG: " ++ show a)
     else return ()) >> return a
 
@@ -105,8 +106,7 @@ optionSpec =
   , Option "m" [] (NoArg OnlyMenus) "Only download gopher menus"
   , Option "n" [] (NoArg NoMenus) "Never download gopher menus"
   , Option "p" [] (NoArg AscendParent) "Allow ascension to the parent directories"
-  , Option "w" [] (ReqArg argDelay "secs") "Delay between downloads"
-  , Option "d" [] (NoArg FlagDebug) "Enable debug messages" ]
+  , Option "w" [] (ReqArg argDelay "secs") "Delay between downloads" ]
 
 isMaxDepth (MaxDepth _) = True
 isMaxDepth otherwise = False
@@ -135,8 +135,7 @@ configFromGetOpt (options, arguments, errors) =
            , onlyMenus = has OnlyMenus
            , noMenus = has NoMenus
            , ascendParent = has AscendParent
-           , delay = findDelay 0.0 options
-           , flagDebug = has FlagDebug })
+           , delay = findDelay 0.0 options })
   where 
     has opt = opt `elem` options 
 
@@ -205,16 +204,24 @@ urlToFilePath (host, path, port) isMenu =
     (sanitizePath path) ++
     (if isMenu then ["gophermap"] else [])
 
-save :: ByteString -> GopherUrl -> Bool -> Config -> IO ()
-save bs url isMenu conf =
-  createDirectoryIfMissing True (dropFileName (urlToFilePath url isMenu)) >>
-  withFile (urlToFilePath url isMenu) WriteMode writeIt
+save :: ByteString -> GopherUrl -> Bool -> IO ()
+save bs url isMenu =
+  let out = urlToFilePath url isMenu in
+  debugLog out >>
+  createDirectoryIfMissing True (dropFileName out) >>
+  withFile out WriteMode writeIt
   where
     writeIt handle = hPut handle bs >> hFlush handle
 
-saveFromMenuLine :: ByteString -> MenuLine -> Config -> IO ()
-saveFromMenuLine bs ml conf = 
-  save bs (menuLineToUrl ml) (isMenuMenuLine ml) conf
+saveFromMenuLine :: ByteString -> MenuLine -> IO ()
+saveFromMenuLine bs ml = 
+  save bs (menuLineToUrl ml) (isMenuMenuLine ml)
+
+saveMenuLine :: MenuLine -> IO () 
+saveMenuLine line =
+  let url = menuLineToUrl line in
+  gopherGetRaw url
+  >>= \bs -> save bs url (isMenuMenuLine line)
 
 gopherGetMenu :: GopherUrl -> IO [MenuLine]
 gopherGetMenu url = 
@@ -225,33 +232,10 @@ filterOfKind GetAll line = True
 filterOfKind GetOnlyFiles (t,_,_,_,_) = t /= '1'
 filterOfKind GetOnlyMenus (t,_,_,_,_) = t == '1'
 
--- TODO 
--- - Sort lines so we can download files first?
--- - How to prevent downloading the same path over and over? Same link
---   can appear multiple times in different branches (passing oldUrls as is won't work!)!
---  - oldUrls won't work, different values in different recursive branches!
---  - solution might involve passing [IO MenuLines], so we can recurse instead of mapM_
-recursiveSave :: [MenuLine] -> GetFileKinds -> Int -> Config -> IO ()
-recursiveSave lines getKinds depthLeft conf =
-  if (depthLeft == 0) || (lines == [])
-    then return ()
-    else mapM_ get lines
-  where
-    get line = 
-      case (isMenuMenuLine line) of
-        True -> getMenu line
-        False -> getFile line
-    getMenu line = 
-      gopherGetRaw (menuLineToUrl line)
-      >>= \bytes -> 
-        putStrLn ((show depthLeft) ++ ", MENU: " ++ (urlToString (menuLineToUrl line))) >>
-        saveFromMenuLine bytes line conf >>
-        recursiveSave (parseMenu bytes) getKinds (depthLeft - 1) conf
-    getFile line =
-      gopherGetRaw (menuLineToUrl line)
-      >>= \bytes ->
-        putStrLn ((show depthLeft) ++ ", FILE: " ++ (urlToString (menuLineToUrl line))) >>
-        saveFromMenuLine bytes line conf
+recursiveSave :: [MenuLine] -> Config -> IO ()
+recursiveSave lines config =
+--  mapM_ (putStrLn . show) $ map menuLineToUrl lines
+  mapM_ saveMenuLine lines
 
 main =
   Env.getArgs 
@@ -264,7 +248,7 @@ main' (args, conf) =
   else if (recursive conf) then
     putStrLn "Recursive!" >>
     gopherGetMenu ("gopher.floodgap.com", "/", "70")
-    >>= \lines -> recursiveSave lines GetAll (maxDepth conf) conf
+    >>= \lines -> recursiveSave lines conf
   else
     gopherGetMenu ("gopher.floodgap.com", "/", "70")
-    >>= debugLog conf >> return ()
+    >>= debugLog >> return ()
