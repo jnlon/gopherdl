@@ -156,15 +156,19 @@ urlToString (host, path, port) =
 
 validPath :: Maybe MenuLine -> Bool
 validPath (Just (_, _, path, _, _)) = 
-  (sLen path) /= 0 &&
+  (sLen path /= 0) &&
   not (sStartsWith (strToUpper path) (C.pack "URL:"))
+
+validType :: Maybe MenuLine -> Bool
+validType (Just (t, _, _, _, _)) = 
+  not $ t `elem` ['7', '2', '3', '8', 'T']
 
 parseMenu :: ByteString -> [MenuLine]
 parseMenu rawMenu = 
   map fromJust $ filter valid $ map parseMenuLine lines
   where 
     lines = C.lines rawMenu
-    valid line = isJust line && validPath line
+    valid line = isJust line && validPath line && validType line
 
 parseMenuLine :: ByteString -> Maybe MenuLine
 parseMenuLine line = 
@@ -207,7 +211,6 @@ urlToFilePath (host, path, port) isMenu =
 save :: ByteString -> GopherUrl -> Bool -> IO ()
 save bs url isMenu =
   let out = urlToFilePath url isMenu in
-  debugLog out >>
   createDirectoryIfMissing True (dropFileName out) >>
   withFile out WriteMode writeIt
   where
@@ -217,14 +220,38 @@ saveFromMenuLine :: ByteString -> MenuLine -> IO ()
 saveFromMenuLine bs ml = 
   save bs (menuLineToUrl ml) (isMenuMenuLine ml)
 
-saveMenuLine :: MenuLine -> IO () 
-saveMenuLine line =
-  let url = menuLineToUrl line in
-  gopherGetRaw url
-  >>= \bs -> save bs url (isMenuMenuLine line)
+data CrawlNode = 
+    FileNode GopherUrl
+  | MenuNode GopherUrl
+    deriving (Show, Eq)
 
+notInHistory history e = 
+  not $ e `elem` history
+
+buildNodeTree :: GopherUrl -> [CrawlNode] -> IO [CrawlNode]
+buildNodeTree url history =
+  gopherGetMenu url 
+  >>= debugLog
+  >>= mapM nodifyLine -- Correct
+  >>= return . filter (notInHistory history)
+  >>= mapM (getNodes history)
+  >>= return . concat
+
+getNodes :: [CrawlNode] -> CrawlNode -> IO [CrawlNode]
+getNodes history node = 
+  case node of
+    FileNode url -> return [node]
+    MenuNode url -> fmap ((:) node) (buildNodeTree url (node : history))
+
+nodifyLine :: MenuLine -> IO CrawlNode
+nodifyLine line = 
+  if (isMenuMenuLine line) 
+    then return $ MenuNode (menuLineToUrl line)
+    else return $ FileNode (menuLineToUrl line)
+    
 gopherGetMenu :: GopherUrl -> IO [MenuLine]
 gopherGetMenu url = 
+  debugLog ("gopherGetMenu: " ++ (urlToString url)) >>
   gopherGetRaw url >>= return . parseMenu
 
 filterOfKind :: GetFileKinds -> MenuLine -> Bool
@@ -232,10 +259,7 @@ filterOfKind GetAll line = True
 filterOfKind GetOnlyFiles (t,_,_,_,_) = t /= '1'
 filterOfKind GetOnlyMenus (t,_,_,_,_) = t == '1'
 
-recursiveSave :: [MenuLine] -> Config -> IO ()
-recursiveSave lines config =
---  mapM_ (putStrLn . show) $ map menuLineToUrl lines
-  mapM_ saveMenuLine lines
+--rSave conf line = saveMenuLine line >>= 
 
 main =
   Env.getArgs 
@@ -247,8 +271,8 @@ main' (args, conf) =
     then putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
   else if (recursive conf) then
     putStrLn "Recursive!" >>
-    gopherGetMenu ("gopher.floodgap.com", "/", "70")
-    >>= \lines -> recursiveSave lines conf
+    buildNodeTree ("gopher.floodgap.com", "/", "70") []
+    >>= putStrLn . show
   else
     gopherGetMenu ("gopher.floodgap.com", "/", "70")
     >>= debugLog >> return ()
