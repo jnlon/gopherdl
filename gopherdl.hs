@@ -48,6 +48,11 @@ data GetFileKinds =
   | GetOnlyFiles
   | GetOnlyMenus
 
+data CrawlNode = 
+    FileNode GopherUrl
+  | MenuNode GopherUrl
+    deriving (Show, Eq)
+
 data Config = Config
  {  recursive :: Bool
   , maxDepth :: Int
@@ -64,11 +69,11 @@ data Config = Config
 {------ Helpers ------}
 {---------------------}
 
-debug = True
+_debug = True
 
 debugLog :: Show a => a -> IO a
 debugLog a =
-  (if debug
+  (if _debug
     then putStrLn $ ("DEBUG: " ++ show a)
     else return ()) >> return a
 
@@ -87,8 +92,12 @@ appendCRLF bs = C.append bs $ C.pack "\r\n"
 addrInfoHints :: AddrInfo
 addrInfoHints = defaultHints { addrSocketType = Stream }
 
-isMenuMenuLine :: MenuLine -> Bool
-isMenuMenuLine (t,_,_,_,_) = t == '1'
+lineIsMenu :: MenuLine -> Bool
+lineIsMenu (t,_,_,_,_) = t == '1'
+
+sanitizePath path = 
+  let nonEmptyString = (/=) 0 . sLen in
+  filter nonEmptyString $ strSplitAll "/" path
 
 {--------------------------}
 {------ Argv Parsing ------}
@@ -154,21 +163,21 @@ urlToString :: GopherUrl -> String
 urlToString (host, path, port) =
   "gopher://" ++ host ++ ":" ++ port ++ path
 
-validPath :: Maybe MenuLine -> Bool
-validPath (Just (_, _, path, _, _)) = 
-  (sLen path /= 0) &&
-  not (sStartsWith (strToUpper path) (C.pack "URL:"))
-
-validType :: Maybe MenuLine -> Bool
-validType (Just (t, _, _, _, _)) = 
-  not $ t `elem` ['7', '2', '3', '8', 'T']
+validLineData :: MenuLine -> Bool
+validLineData line = 
+  validPath line && validType line
+  where 
+    validPath (_, _, path, _, _) = 
+      sStartsWith path (C.pack "/")
+    validType (t, _, _, _, _) = 
+      not $ t `elem` ['7', '2', '3', '8', 'T']
 
 parseMenu :: ByteString -> [MenuLine]
 parseMenu rawMenu = 
-  map fromJust $ filter valid $ map parseMenuLine lines
+  let lines = map parseMenuLine $ C.lines rawMenu in
+  pruneInvalid $ map fromJust $ filter isJust $ lines
   where 
-    lines = C.lines rawMenu
-    valid line = isJust line && validPath line && validType line
+    pruneInvalid = filter validLineData
 
 parseMenuLine :: ByteString -> Maybe MenuLine
 parseMenuLine line = 
@@ -183,9 +192,9 @@ parseMenuLine line =
       , (strTrim host)
       , (strTrim port) )
 
-{----------------------}
-{------ IO & main -----}
-{----------------------}
+{---------------}
+{------ IO -----}
+{---------------}
 
 gopherGetRaw :: GopherUrl -> IO ByteString
 gopherGetRaw (host, path, port) =
@@ -196,9 +205,6 @@ gopherGetRaw (host, path, port) =
       >> sendAll sock (appendCRLF $ C.pack path)
       >> recvAll sock
 
-sanitizePath path = 
-  let nonEmptyString = (/=) 0 . sLen in
-  filter nonEmptyString $ strSplitAll "/" path
 
 -- host path port
 urlToFilePath :: GopherUrl -> Bool -> FilePath
@@ -218,24 +224,18 @@ save bs url isMenu =
 
 saveFromMenuLine :: ByteString -> MenuLine -> IO ()
 saveFromMenuLine bs ml = 
-  save bs (menuLineToUrl ml) (isMenuMenuLine ml)
-
-data CrawlNode = 
-    FileNode GopherUrl
-  | MenuNode GopherUrl
-    deriving (Show, Eq)
-
-notInHistory history e = 
-  not $ e `elem` history
+  save bs (menuLineToUrl ml) (lineIsMenu ml)
 
 buildNodeTree :: GopherUrl -> [CrawlNode] -> IO [CrawlNode]
 buildNodeTree url history =
   gopherGetMenu url 
   >>= debugLog
   >>= mapM nodifyLine -- Correct
-  >>= return . filter (notInHistory history)
+  >>= return . filter notInHistory
   >>= mapM (getNodes history)
   >>= return . concat
+  where
+    notInHistory e = not $ e `elem` history
 
 getNodes :: [CrawlNode] -> CrawlNode -> IO [CrawlNode]
 getNodes history node = 
@@ -245,7 +245,7 @@ getNodes history node =
 
 nodifyLine :: MenuLine -> IO CrawlNode
 nodifyLine line = 
-  if (isMenuMenuLine line) 
+  if (lineIsMenu line) 
     then return $ MenuNode (menuLineToUrl line)
     else return $ FileNode (menuLineToUrl line)
     
@@ -254,12 +254,9 @@ gopherGetMenu url =
   debugLog ("gopherGetMenu: " ++ (urlToString url)) >>
   gopherGetRaw url >>= return . parseMenu
 
-filterOfKind :: GetFileKinds -> MenuLine -> Bool
-filterOfKind GetAll line = True
-filterOfKind GetOnlyFiles (t,_,_,_,_) = t /= '1'
-filterOfKind GetOnlyMenus (t,_,_,_,_) = t == '1'
-
---rSave conf line = saveMenuLine line >>= 
+{-----------------}
+{------ Main -----}
+{-----------------}
 
 main =
   Env.getArgs 
