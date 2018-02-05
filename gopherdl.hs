@@ -3,6 +3,9 @@ import Data.Maybe
 import Data.Strings
 import Network.Socket
 import Control.Exception
+import System.IO
+import System.Directory (createDirectoryIfMissing)
+import Data.ByteString (hPut)
 import System.FilePath.Posix
 import qualified System.Environment as Env
 import qualified Network.Socket.ByteString as BsNet
@@ -12,6 +15,13 @@ import System.Console.GetOpt (OptDescr(Option),
                               getOpt,
                               ArgOrder(RequireOrder),
                               usageInfo)
+
+
+{- TODO
+  - Function to read from socket while writing to a file? 
+    - Will we run out of ram downloading a large file, or does lazyness help?
+  - 
+-}
 
 sendAll = BsNet.sendAll
 type ByteString = C.ByteString
@@ -195,13 +205,12 @@ urlToFilePath (host, path, port) isMenu =
     (sanitizePath path) ++
     (if isMenu then ["gophermap"] else [])
 
-main =
-  Env.getArgs 
-  >>= main' . configFromGetOpt . parseWithGetOpt
-
 save :: ByteString -> GopherUrl -> Bool -> Config -> IO ()
 save bs url isMenu conf =
-  C.writeFile (urlToFilePath url isMenu) bs
+  createDirectoryIfMissing True (dropFileName (urlToFilePath url isMenu)) >>
+  withFile (urlToFilePath url isMenu) WriteMode writeIt
+  where
+    writeIt handle = hPut handle bs >> hFlush handle
 
 saveFromMenuLine :: ByteString -> MenuLine -> Config -> IO ()
 saveFromMenuLine bs ml conf = 
@@ -211,29 +220,42 @@ gopherGetMenu :: GopherUrl -> IO [MenuLine]
 gopherGetMenu url = 
   gopherGetRaw url >>= return . parseMenu
 
+filterOfKind :: GetFileKinds -> MenuLine -> Bool
+filterOfKind GetAll line = True
+filterOfKind GetOnlyFiles (t,_,_,_,_) = t /= '1'
+filterOfKind GetOnlyMenus (t,_,_,_,_) = t == '1'
+
+-- TODO 
+-- - Sort lines so we can download files first?
+-- - How to prevent downloading the same path over and over? Same link
+--   can appear multiple times in different branches (passing oldUrls as is won't work!)!
+--  - oldUrls won't work, different values in different recursive branches!
+--  - solution might involve passing [IO MenuLines], so we can recurse instead of mapM_
 recursiveSave :: [MenuLine] -> GetFileKinds -> Int -> Config -> IO ()
 recursiveSave lines getKinds depthLeft conf =
   if (depthLeft == 0) || (lines == [])
     then return ()
     else mapM_ get lines
   where
-    {- TODO Use case to come up with filter function for lines -}
-    getAll line = return ()
-    getFiles line = return ()
-    getMenus line = return ()
     get line = 
-      case getKinds of
-        GetAll -> getAll line
-        GetOnlyFiles -> getFiles line
-        GetOnlyMenus -> getMenus line
-      
-      {-
-      if (isMenu line) then 
-        gopherGetMenu (menuLineToUrl line)
-        >>= 
-        >>= \ents ->
-        saveMenuFromLine gopherGetMenu
-      else -}
+      case (isMenuMenuLine line) of
+        True -> getMenu line
+        False -> getFile line
+    getMenu line = 
+      gopherGetRaw (menuLineToUrl line)
+      >>= \bytes -> 
+        putStrLn ((show depthLeft) ++ ", MENU: " ++ (urlToString (menuLineToUrl line))) >>
+        saveFromMenuLine bytes line conf >>
+        recursiveSave (parseMenu bytes) getKinds (depthLeft - 1) conf
+    getFile line =
+      gopherGetRaw (menuLineToUrl line)
+      >>= \bytes ->
+        putStrLn ((show depthLeft) ++ ", FILE: " ++ (urlToString (menuLineToUrl line))) >>
+        saveFromMenuLine bytes line conf
+
+main =
+  Env.getArgs 
+  >>= main' . configFromGetOpt . parseWithGetOpt
 
 main' :: ([String], Config) -> IO ()
 main' (args, conf) =
@@ -242,7 +264,7 @@ main' (args, conf) =
   else if (recursive conf) then
     putStrLn "Recursive!" >>
     gopherGetMenu ("gopher.floodgap.com", "/", "70")
-    >>= debugLog conf >> return ()
+    >>= \lines -> recursiveSave lines GetAll (maxDepth conf) conf
   else
     gopherGetMenu ("gopher.floodgap.com", "/", "70")
     >>= debugLog conf >> return ()
