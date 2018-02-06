@@ -303,7 +303,7 @@ main =
 -- Check sanity of config and args
 main' :: ([String], Config) -> IO ()
 main' (args, conf)
-  | (help conf) = showUsage 
+  | (help conf) || (length args) == 0 = showUsage 
   | (length args) /= (length urls) = putStrLn "Cannot Parse URL(s)" >> showUsage
   | otherwise = mapM_ (main'' conf) urls
     where 
@@ -320,5 +320,7 @@ main'' conf url =
       putStrLn (":: Downloading Files: " ++ (show (length fileUrls)))
       >> mapM_ getAndSaveFilePrintStatus fileUrls
   else
-    putStrLn $ show url
+    putStrLn ":: Downloading Single File" >>
+    mapM_ getAndSaveFilePrintStatus [url]
     -- >>= debugLog >> return ()
+
