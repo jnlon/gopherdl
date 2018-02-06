@@ -57,12 +57,13 @@ data Config = Config
 {------ Helpers ------}
 {---------------------}
 
-_debug = False
+_debug = True
 
 debugLog :: Show a => a -> IO a
 debugLog a =
   (if _debug
-    then putStrLn $ ("DEBUG: " ++ show a)
+    then (hPutStrLn stderr ("DEBUG: " ++ show a) 
+         >> hFlush stderr)
     else return ()) >> return a
 
 recvAll :: Socket -> IO ByteString
@@ -93,7 +94,10 @@ showUsage =
   putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
 
 sameHost url1 url2 =
-  (hostOfUrl url1) /= (hostOfUrl url1)
+  (hostOfUrl url1) == (hostOfUrl url2)
+
+nchrs chr n = 
+  concat $ replicate n [chr]
 
 fixProto s = 
   let noProto s = (snd (strSplit "://" s)) == "" in
@@ -205,7 +209,7 @@ parseMenuLine :: ByteString -> Maybe MenuLine
 parseMenuLine line = 
   case (strSplitAll "\t" line) of
     [t1, t2, t3, t4] -> Just $ parseToks t1 t2 t3 t4
-    _ -> Nothing
+    otherwise -> Nothing
   where
     parseToks front path host port =
       ( (strHead front)   -- Type
@@ -260,7 +264,7 @@ getRecursively url conf =
 
 crawlMenu :: GopherUrl -> Config -> Int -> [GopherUrl] -> IO [Remote]
 crawlMenu url conf depth history =
-  putStrLn ("(menu) " ++ (urlToString url))
+  putStrLn ((nchrs '-' ((maxDepth conf) - depth)) ++ "(menu) " ++ (urlToString url))
   >> getAndSaveMenu url
   >>= debugLog
   >>= return . map remotifyLine . filter okLine
@@ -271,8 +275,9 @@ crawlMenu url conf depth history =
       notInHistory ml && okHost ml
     notInHistory ml = 
       (mlToUrl ml) `notElem` history
-    okHost ml = 
-      not (spanHosts conf) && sameHost url (mlToUrl ml)
+    okHost ml =
+      if (spanHosts conf) then True 
+                          else sameHost url (mlToUrl ml)
 
 getRemotes :: Config -> Int -> [GopherUrl] -> Remote -> IO [Remote]
 getRemotes conf depth history remote = 
@@ -308,7 +313,9 @@ getAndSaveFilePrintStatus url =
 
 -- Get Argv, turn it into a Config
 main :: IO ()
-main = Env.getArgs >>= main' . argvToConfig
+main = Env.getArgs 
+  >>= debugLog . argvToConfig
+  >>= main'
 
 -- Check sanity of config and args
 main' :: ([String], Config) -> IO ()
