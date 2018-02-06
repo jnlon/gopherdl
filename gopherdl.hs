@@ -42,11 +42,6 @@ data Flag =
     | AscendParent
     | Delay Float deriving (Show, Eq)
 
-data GetFileKinds =
-    GetAll
-  | GetOnlyFiles
-  | GetOnlyMenus
-
 data CrawlNode = 
     FileNode GopherUrl
   | MenuNode GopherUrl
@@ -59,7 +54,6 @@ data Config = Config
   , help :: Bool
   , clobber :: Bool
   , onlyMenus :: Bool
-  , noMenus :: Bool
   , ascendParent :: Bool
   , delay :: Float
   } deriving (Show)
@@ -112,7 +106,6 @@ optionSpec =
   , Option "h" [] (NoArg Help) "Show this help"
   , Option "c" [] (NoArg Clobber) "Enable file clobbering (overwrite existing)"
   , Option "m" [] (NoArg OnlyMenus) "Only download gopher menus"
-  , Option "n" [] (NoArg NoMenus) "Never download gopher menus"
   , Option "p" [] (NoArg AscendParent) "Allow ascension to the parent directories"
   , Option "w" [] (ReqArg argDelay "secs") "Delay between downloads" ]
 
@@ -141,7 +134,6 @@ configFromGetOpt (options, arguments, errors) =
            , help = has Help
            , clobber = has Clobber
            , onlyMenus = has OnlyMenus
-           , noMenus = has NoMenus
            , ascendParent = has AscendParent
            , delay = findDelay 0.0 options })
   where 
@@ -230,7 +222,7 @@ buildNodeTree url history =
   >>= mapM (getNodes history)
   >>= return . concat
   where
-    notInHistory e = not $ e `elem` history
+    notInHistory e = e `notElem` history
 
 getNodes :: [CrawlNode] -> CrawlNode -> IO [CrawlNode]
 getNodes history node = 
