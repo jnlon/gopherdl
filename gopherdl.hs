@@ -92,9 +92,15 @@ lineIsMenu (t,_,_,_,_) = t == '1'
 nodeToUrl (FileNode url) = url
 nodeToUrl (MenuNode url) = url
 
-isFileNode :: CrawlNode -> Bool
 isFileNode (FileNode _) = True
 isFileNode otherwise  = False
+
+showUsage = 
+  putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
+
+fixProto s = 
+  let noProto s = (snd (strSplit "://" s)) == "" in
+  if (noProto s) then ("gopher://" ++ s) else s
 
 sanitizePath path = 
   let nonEmptyString = (/=) 0 . sLen in
@@ -152,6 +158,18 @@ parseWithGetOpt argv = getOpt RequireOrder optionSpec argv
 
 argvToConfig :: [String] -> ([String], Config)
 argvToConfig = configFromGetOpt . parseWithGetOpt
+
+uriToGopherUrl :: Maybe URI -> Maybe GopherUrl
+uriToGopherUrl Nothing = Nothing
+uriToGopherUrl (Just uri) =
+  case (uriAuthority uri) of
+    Just auth -> Just ((getHost auth), (getPath uri), (getPort auth))
+    otherwise -> Nothing
+  where 
+    (?>>) a def = if a == "" then def else a
+    getHost auth = (uriRegName auth)
+    getPath uri = (uriPath uri) ?>> "/"
+    getPort auth = (strDrop 1 (uriPort auth)) ?>> "70"
 
 {------------------------}
 {----- Menu Parsing -----}
@@ -254,14 +272,12 @@ buildNodeTree url depth history =
 getNodes :: Int -> [CrawlNode] -> CrawlNode -> IO [CrawlNode]
 getNodes depth history node = 
   case node of
-    FileNode url -> 
-      return [node]
-    MenuNode url -> 
-      (fmap 
-        ((:) node) 
-        (if (depth - 1) == 0 
-          then return []
-          else (buildNodeTree url (depth - 1) (node : history))))
+    FileNode url -> return [node]
+    MenuNode url -> fmap ((:) node) nextNodes
+      where 
+        nextNodes = if atMaxDepth then return [] else getNextNodes 
+        atMaxDepth = (depth - 1) == 0
+        getNextNodes = buildNodeTree url (depth - 1) (node : history)
 
 nodifyLine :: MenuLine -> IO CrawlNode
 nodifyLine line = 
@@ -275,18 +291,22 @@ gopherGetMenu url =
   gopherGetRaw url 
   >>= \bytes -> return $ (bytes, parseMenu bytes)
 
+getAndSaveFilePrintStatus :: GopherUrl -> IO ()
+getAndSaveFilePrintStatus url =
+  putStrLn ("(file) " ++ (urlToString url)) >>
+  getAndSaveFile url >>
+  hFlush stdout
+
 {-----------------}
 {------ Main -----}
 {-----------------}
 
+-- Get Argv, turn it into a Config
 main =
   Env.getArgs 
   >>= main' . argvToConfig
 
-fixProto s = 
-  let noProto s = (snd (strSplit "://" s)) == "" in
-  if (noProto s) then ("gopher://" ++ s) else s
-
+-- Check sanity of config and args
 main' :: ([String], Config) -> IO ()
 main' (args, conf)
   | (help conf) = showUsage 
@@ -295,27 +315,7 @@ main' (args, conf)
     where 
       urls = catMaybes $ map (uriToGopherUrl . parseURI . fixProto) args
 
-getAndSaveFilePrintStatus :: GopherUrl -> IO ()
-getAndSaveFilePrintStatus url =
-  putStrLn ("(file) " ++ (urlToString url)) >>
-  getAndSaveFile url >>
-  hFlush stdout
-
-showUsage = 
-  putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
-
-uriToGopherUrl :: Maybe URI -> Maybe GopherUrl
-uriToGopherUrl Nothing = Nothing
-uriToGopherUrl (Just uri) =
-  case (uriAuthority uri) of
-    Just auth -> Just ((getHost auth), (getPath uri), (getPort auth))
-    otherwise -> Nothing
-  where 
-    (?>>) a def = if a == "" then def else a
-    getHost auth = (uriRegName auth)
-    getPath uri = (uriPath uri) ?>> "/"
-    getPort auth = (strDrop 1 (uriPort auth)) ?>> "70"
-
+-- Handle each gopher URL
 main'' :: Config -> GopherUrl -> IO ()
 main'' conf url =
   if (recursive conf) then
