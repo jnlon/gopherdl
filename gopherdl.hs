@@ -6,7 +6,7 @@ import Network.Socket
 import Control.Exception
 import Control.Monad
 import System.IO
-import System.Directory (createDirectoryIfMissing, doesFileExist)
+import System.Directory (createDirectoryIfMissing, doesPathExist)
 import Data.ByteString (hPut)
 import System.FilePath.Posix
 import qualified System.Environment as Env
@@ -98,6 +98,9 @@ sameHost url1 url2 =
 
 nchrs chr n = 
   concat $ replicate n [chr]
+
+putStrLnIf cond msg =
+  if cond then putStrLn msg else return ()
 
 fixProto s = 
   let noProto s = (snd (strSplit "://" s)) == "" in
@@ -231,8 +234,8 @@ gopherGetRaw (host, path, port) =
       >> sendAll sock (appendCRLF $ C.pack path)
       >> recvAll sock
 
-urlToFilePath :: GopherUrl -> Bool -> FilePath
-urlToFilePath (host, path, port) isMenu = 
+urlToFilePath :: Bool ->  GopherUrl -> FilePath
+urlToFilePath isMenu (host, path, port) = 
   joinPath $ 
     [host] ++
     (sanitizePath path) ++
@@ -240,7 +243,7 @@ urlToFilePath (host, path, port) isMenu =
 
 save :: ByteString -> GopherUrl -> Bool -> IO ()
 save bs url isMenu =
-  let out = urlToFilePath url isMenu in
+  let out = urlToFilePath isMenu url in
   createDirectoryIfMissing True (dropFileName out) >>
   withFile out WriteMode writeIt
   where
@@ -261,8 +264,8 @@ getAndSaveFile url =
 -- If file exists on disk, read it instead of accessing network
 getAndSaveMenuCheckExists :: GopherUrl -> IO [MenuLine]
 getAndSaveMenuCheckExists url = 
-  let path = urlToFilePath url True in
-  doesFileExist path
+  let path = urlToFilePath True url in
+  doesPathExist path
   >>= \exists -> 
     if exists 
       then (readFile path >>= return . parseMenu . C.pack ) 
@@ -347,18 +350,31 @@ main' (args, conf)
 main'' :: Config -> GopherUrl -> IO ()
 main'' conf url
   | (recursive conf) = 
-    putStrLn ":: Building Menu Tree" >>
+    putStrLn ":: Downloading Menus" >>
     getRecursively url conf
     >>= downloadSaveRemoteFiles conf
   | otherwise =
     putStrLn ":: Downloading Single File" >>
     mapM_ getAndSaveFilePrintStatus [url]
 
+
 downloadSaveRemoteFiles :: Config -> [Remote] -> IO ()
 downloadSaveRemoteFiles conf remotes
   | (onlyMenus conf) = return ()
-  | otherwise =
-    putStrLn (":: Downloading Files: " ++ (show $ length fileUrls)) >>
-    mapM_ getAndSaveFilePrintStatus fileUrls
-    where 
-      fileUrls = map remoteToUrl $ filter isRemoteFile remotes
+  | not (clobber conf) = 
+      filterM urlPathNotExists fileUrls
+      >>= \notOnDisk -> 
+        let numToSkip = ((length remotes) - (length notOnDisk)) in
+        putStrLnIf (numToSkip > 0) (":: Skipping " ++ (show numToSkip) ++ " Existing Files") 
+        >> downloadSaveRemoteFiles' notOnDisk
+  | otherwise = downloadSaveRemoteFiles' fileUrls
+  where 
+    fileUrls = map remoteToUrl $ filter isRemoteFile remotes
+    urlPathExists = doesPathExist . urlToFilePath False
+    urlPathNotExists p = urlPathExists p >>= return . not
+
+downloadSaveRemoteFiles' :: [GopherUrl] -> IO ()
+downloadSaveRemoteFiles' fileUrls = 
+  let nFiles = (length fileUrls) in
+  putStrLnIf (nFiles > 0) (":: Downloading " ++ (show nFiles) ++ " Files")
+  >> mapM_ getAndSaveFilePrintStatus fileUrls
