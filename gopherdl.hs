@@ -18,12 +18,6 @@ import System.Console.GetOpt (OptDescr(Option),
                               ArgOrder(RequireOrder),
                               usageInfo)
 
-
-{- TODO
-  - Function to read from socket while writing to a file? 
-    - Will we run out of ram downloading a large file, or does lazyness help?
--}
-
 sendAll = BsNet.sendAll
 type ByteString = C.ByteString
 
@@ -43,9 +37,9 @@ data Flag =
     | AscendParent
     | Delay Float deriving (Show, Eq)
 
-data CrawlNode = 
-    FileNode GopherUrl
-  | MenuNode GopherUrl
+data Remote = 
+    RemoteFile GopherUrl
+  | RemoteMenu GopherUrl
     deriving (Show, Eq)
 
 data Config = Config
@@ -89,11 +83,11 @@ addrInfoHints = defaultHints { addrSocketType = Stream }
 lineIsMenu :: MenuLine -> Bool
 lineIsMenu (t,_,_,_,_) = t == '1'
 
-nodeToUrl (FileNode url) = url
-nodeToUrl (MenuNode url) = url
+remoteToUrl (RemoteFile url) = url
+remoteToUrl (RemoteMenu url) = url
 
-isFileNode (FileNode _) = True
-isFileNode otherwise  = False
+isRemoteFile (RemoteFile _) = True
+isRemoteFile otherwise  = False
 
 showUsage = 
   putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
@@ -251,12 +245,12 @@ saveFromMenuLine :: ByteString -> MenuLine -> IO ()
 saveFromMenuLine bs ml = 
   save bs (menuLineToUrl ml) (lineIsMenu ml)
 
-getRecursively :: GopherUrl -> Config -> IO [CrawlNode]
+getRecursively :: GopherUrl -> Config -> IO [Remote]
 getRecursively url conf =
-  buildNodeTree url (maxDepth conf) []
+  crawlMenu url (maxDepth conf) []
 
-buildNodeTree :: GopherUrl -> Int -> [CrawlNode] -> IO [CrawlNode]
-buildNodeTree url depth history =
+crawlMenu :: GopherUrl -> Int -> [Remote] -> IO [Remote]
+crawlMenu url depth history =
   gopherGetMenu url 
   >>= \(bytes, lines) ->
     saveMenu bytes url {- Write the menu to disk as cache -}
@@ -264,26 +258,26 @@ buildNodeTree url depth history =
     >> debugLog lines
     >>= mapM nodifyLine -- Correct
     >>= return . filter notInHistory
-    >>= mapM (getNodes depth history)
+    >>= mapM (getRemotes depth history)
     >>= return . concat
   where
     notInHistory e = e `notElem` history
 
-getNodes :: Int -> [CrawlNode] -> CrawlNode -> IO [CrawlNode]
-getNodes depth history node = 
-  case node of
-    FileNode url -> return [node]
-    MenuNode url -> fmap ((:) node) nextNodes
+getRemotes :: Int -> [Remote] -> Remote -> IO [Remote]
+getRemotes depth history remote = 
+  case remote of
+    RemoteFile url -> return [remote]
+    RemoteMenu url -> fmap ((:) remote) nextRemotes
       where 
-        nextNodes = if atMaxDepth then return [] else getNextNodes 
+        nextRemotes = if atMaxDepth then return [] else getNextRemotes
         atMaxDepth = (depth - 1) == 0
-        getNextNodes = buildNodeTree url (depth - 1) (node : history)
+        getNextRemotes = crawlMenu url (depth - 1) (remote : history)
 
-nodifyLine :: MenuLine -> IO CrawlNode
+nodifyLine :: MenuLine -> IO Remote
 nodifyLine line = 
   if (lineIsMenu line) 
-    then return $ MenuNode (menuLineToUrl line)
-    else return $ FileNode (menuLineToUrl line)
+    then return $ RemoteMenu (menuLineToUrl line)
+    else return $ RemoteFile (menuLineToUrl line)
     
 gopherGetMenu :: GopherUrl -> IO (ByteString, [MenuLine])
 gopherGetMenu url = 
@@ -321,7 +315,7 @@ main'' conf url =
   if (recursive conf) then
     putStrLn ":: Building Menu Tree" >>
     getRecursively url conf
-    >>= return . map nodeToUrl . filter isFileNode
+    >>= return . map remoteToUrl . filter isRemoteFile
     >>= \fileUrls ->
       putStrLn (":: Downloading Files: " ++ (show (length fileUrls)))
       >> mapM_ getAndSaveFilePrintStatus fileUrls
