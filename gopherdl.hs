@@ -258,15 +258,15 @@ crawlMenu :: GopherUrl -> Config -> Int -> [GopherUrl] -> IO [Remote]
 crawlMenu url conf depth history =
   putStrLn ("(menu) " ++ (urlToString url))
   >> getAndSaveMenu url
-  >>= debugLog                -- Log the menu lines
-  >>= return . filter okHost  -- filter out hosts based on config
-  >>= return . filter notInHistory
-  >>= mapM nodifyLine
+  >>= debugLog
+  >>= return . map remotifyLine . filter okLine
   >>= mapM (getRemotes conf depth history)
   >>= return . concat
   where
-    notInHistory e = 
-      (mlToUrl e) `notElem` history
+    okLine ml = 
+      notInHistory ml && okHost ml
+    notInHistory ml = 
+      (mlToUrl ml) `notElem` history
     okHost ml = 
       not (spanHosts conf) && sameHost url (mlToUrl ml)
 
@@ -280,11 +280,11 @@ getRemotes conf depth history remote =
         atMaxDepth = (depth - 1) == 0
         getNextRemotes = crawlMenu url conf (depth - 1) (url : history)
 
-nodifyLine :: MenuLine -> IO Remote
-nodifyLine line = 
-  if (lineIsMenu line) 
-    then return $ RemoteMenu (mlToUrl line)
-    else return $ RemoteFile (mlToUrl line)
+remotifyLine :: MenuLine -> Remote
+remotifyLine ml = 
+  if (lineIsMenu ml) 
+    then RemoteMenu (mlToUrl ml)
+    else RemoteFile (mlToUrl ml)
     
 gopherGetMenu :: GopherUrl -> IO (ByteString, [MenuLine])
 gopherGetMenu url = 
