@@ -100,6 +100,9 @@ sanitizePath path =
   let nonEmptyString = (/=) 0 . sLen in
   filter nonEmptyString $ strSplitAll "/" path
 
+hostOfUrl :: GopherUrl -> String
+hostOfUrl (host, _, _) = host
+
 {--------------------------}
 {------ Argv Parsing ------}
 {--------------------------}
@@ -169,8 +172,8 @@ uriToGopherUrl (Just uri) =
 {----- Menu Parsing -----}
 {------------------------}
 
-menuLineToUrl :: MenuLine -> GopherUrl
-menuLineToUrl (_, _, path, host, port) =
+mlToUrl :: MenuLine -> GopherUrl
+mlToUrl (_, _, path, host, port) =
   (C.unpack host, C.unpack path, C.unpack port)
 
 urlToString :: GopherUrl -> String
@@ -232,52 +235,56 @@ save bs url isMenu =
   where
     writeIt handle = hPut handle bs >> hFlush handle
 
-saveMenu :: ByteString -> GopherUrl -> IO ()
-saveMenu bs url = save bs url True
+getAndSaveMenu :: GopherUrl -> IO [MenuLine]
+getAndSaveMenu url = 
+  gopherGetRaw url 
+    >>= \bs -> save bs url True
+    >> return (parseMenu bs)
 
-saveFile :: ByteString -> GopherUrl -> IO ()
-saveFile bs url = save bs url False
-
-getAndSaveFile :: GopherUrl -> IO ()
-getAndSaveFile url = gopherGetRaw url >>= \bs -> saveFile bs url
-
-saveFromMenuLine :: ByteString -> MenuLine -> IO ()
-saveFromMenuLine bs ml = 
-  save bs (menuLineToUrl ml) (lineIsMenu ml)
+getAndSaveFile :: GopherUrl -> IO ByteString
+getAndSaveFile url = 
+  gopherGetRaw url 
+    >>= \bs -> save bs url False 
+    >> return bs
 
 getRecursively :: GopherUrl -> Config -> IO [Remote]
 getRecursively url conf =
-  crawlMenu url (maxDepth conf) []
+  crawlMenu url conf (maxDepth conf) []
 
-crawlMenu :: GopherUrl -> Int -> [Remote] -> IO [Remote]
-crawlMenu url depth history =
-  gopherGetMenu url 
-  >>= \(bytes, lines) ->
-    saveMenu bytes url {- Write the menu to disk as cache -}
-    >> putStrLn ("(menu) " ++ (urlToString url))
-    >> debugLog lines
-    >>= mapM nodifyLine -- Correct
-    >>= return . filter notInHistory
-    >>= mapM (getRemotes depth history)
-    >>= return . concat
+sameHost url1 url2 =
+  (hostOfUrl url1) /= (hostOfUrl url1)
+
+crawlMenu :: GopherUrl -> Config -> Int -> [Remote] -> IO [Remote]
+crawlMenu url conf depth history =
+  putStrLn ("(menu) " ++ (urlToString url))
+  >> getAndSaveMenu url
+  >>= debugLog                -- Log the menu lines
+  >>= return . filter okHost  -- filter out hosts based on config
+  >>= mapM nodifyLine
+  >>= return . filter notInHistory
+  >>= mapM (getRemotes conf depth history)
+  >>= return . concat
   where
-    notInHistory e = e `notElem` history
+    notInHistory e = 
+      e `notElem` history
+    okHost ml = 
+      not (spanHosts conf) && sameHost url (mlToUrl ml)
 
-getRemotes :: Int -> [Remote] -> Remote -> IO [Remote]
-getRemotes depth history remote = 
+getRemotes :: Config -> Int -> [Remote] -> Remote -> IO [Remote]
+getRemotes conf depth history remote = 
   case remote of
     RemoteFile url -> return [remote]
     RemoteMenu url -> fmap ((:) remote) nextRemotes
       where 
         nextRemotes = if atMaxDepth then return [] else getNextRemotes
         atMaxDepth = (depth - 1) == 0
-        getNextRemotes = crawlMenu url (depth - 1) (remote : history)
+        getNextRemotes = crawlMenu url conf (depth - 1) (remote : history)
 
 nodifyLine :: MenuLine -> IO Remote
 nodifyLine line = 
   if (lineIsMenu line) 
-    then return $ RemoteMenu (menuLineToUrl line)
-    else return $ RemoteFile (menuLineToUrl line)
+    then return $ RemoteMenu (mlToUrl line)
+    else return $ RemoteFile (mlToUrl line)
     
 gopherGetMenu :: GopherUrl -> IO (ByteString, [MenuLine])
 gopherGetMenu url = 
