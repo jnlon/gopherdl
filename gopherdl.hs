@@ -92,6 +92,9 @@ isRemoteFile otherwise  = False
 showUsage = 
   putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
 
+sameHost url1 url2 =
+  (hostOfUrl url1) /= (hostOfUrl url1)
+
 fixProto s = 
   let noProto s = (snd (strSplit "://" s)) == "" in
   if (noProto s) then ("gopher://" ++ s) else s
@@ -103,8 +106,8 @@ sanitizePath path =
 hostOfUrl :: GopherUrl -> String
 hostOfUrl (host, _, _) = host
 
-stringToGopherUrl :: String -> Maybe GopherUrl
-stringToGopherUrl =
+parseGopherUrl :: String -> Maybe GopherUrl
+parseGopherUrl =
   uriToGopherUrl . parseURI . fixProto
 
 {--------------------------}
@@ -255,9 +258,6 @@ getRecursively :: GopherUrl -> Config -> IO [Remote]
 getRecursively url conf =
   crawlMenu url conf (maxDepth conf) []
 
-sameHost url1 url2 =
-  (hostOfUrl url1) /= (hostOfUrl url1)
-
 crawlMenu :: GopherUrl -> Config -> Int -> [GopherUrl] -> IO [Remote]
 crawlMenu url conf depth history =
   putStrLn ("(menu) " ++ (urlToString url))
@@ -292,8 +292,8 @@ remotifyLine ml =
     
 gopherGetMenu :: GopherUrl -> IO (ByteString, [MenuLine])
 gopherGetMenu url = 
-  debugLog ("gopherGetMenu: " ++ (urlToString url)) >>
-  gopherGetRaw url 
+  debugLog ("gopherGetMenu: " ++ (urlToString url))
+  >> gopherGetRaw url 
   >>= \bytes -> return $ (bytes, parseMenu bytes)
 
 getAndSaveFilePrintStatus :: GopherUrl -> IO ()
@@ -307,39 +307,37 @@ getAndSaveFilePrintStatus url =
 {-----------------}
 
 -- Get Argv, turn it into a Config
-main =
-  Env.getArgs 
-  >>= main' . argvToConfig
+main :: IO ()
+main = Env.getArgs >>= main' . argvToConfig
 
 -- Check sanity of config and args
 main' :: ([String], Config) -> IO ()
 main' (args, conf)
   | helpFlag || noArg = showUsage 
   | failedParsingUrl = putStrLn "Cannot Parse URL(s)" >> showUsage
-  | otherwise = mapM_ (main'' conf) urls 
-                >> putStrLn ":: Done"
+  | otherwise = mapM_ (main'' conf) parsedUrls >> putStrLn ":: Done"
   where 
     helpFlag = (help conf)
     noArg = (length args) == 0
-    urls = catMaybes $ map stringToGopherUrl args
-    failedParsingUrl = (length args) /= (length urls)
+    parsedUrls = catMaybes $ map parseGopherUrl args
+    failedParsingUrl = (length args) /= (length parsedUrls)
 
 -- Handle each gopher URL
 main'' :: Config -> GopherUrl -> IO ()
 main'' conf url
   | (recursive conf) = 
-    putStrLn ":: Building Menu Tree" 
-    >> getRecursively url conf
+    putStrLn ":: Building Menu Tree" >>
+    getRecursively url conf
     >>= downloadSaveRemoteFiles conf
   | otherwise =
-    putStrLn ":: Downloading Single File" 
-    >> mapM_ getAndSaveFilePrintStatus [url]
+    putStrLn ":: Downloading Single File" >>
+    mapM_ getAndSaveFilePrintStatus [url]
 
 downloadSaveRemoteFiles :: Config -> [Remote] -> IO ()
 downloadSaveRemoteFiles conf remotes
   | (onlyMenus conf) = return ()
   | otherwise =
-    putStrLn (":: Downloading Files: " ++ (show $ length fileUrls))
-    >> mapM_ getAndSaveFilePrintStatus fileUrls
+    putStrLn (":: Downloading Files: " ++ (show $ length fileUrls)) >>
+    mapM_ getAndSaveFilePrintStatus fileUrls
     where 
       fileUrls = map remoteToUrl $ filter isRemoteFile remotes
