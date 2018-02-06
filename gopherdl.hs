@@ -88,6 +88,9 @@ addrInfoHints = defaultHints { addrSocketType = Stream }
 lineIsMenu :: MenuLine -> Bool
 lineIsMenu (t,_,_,_,_) = t == '1'
 
+nodeToUrl (FileNode url) = url
+nodeToUrl (MenuNode url) = url
+
 isFileNode :: CrawlNode -> Bool
 isFileNode (FileNode _) = True
 isFileNode otherwise  = False
@@ -228,13 +231,10 @@ saveFromMenuLine bs ml =
 
 getRecursively :: GopherUrl -> Config -> IO [CrawlNode]
 getRecursively url conf =
-  buildNodeTree url []
-  {->>= \nodes -> if conf.onlyMenus 
-                then []
-                else saveNodes-}
+  buildNodeTree url (maxDepth conf) []
 
-buildNodeTree :: GopherUrl -> [CrawlNode] -> IO [CrawlNode]
-buildNodeTree url history =
+buildNodeTree :: GopherUrl -> Int -> [CrawlNode] -> IO [CrawlNode]
+buildNodeTree url depth history =
   gopherGetMenu url 
   >>= \(bytes, lines) ->
     saveMenu bytes url {- Write the menu to disk as cache -}
@@ -242,16 +242,22 @@ buildNodeTree url history =
     >> debugLog lines
     >>= mapM nodifyLine -- Correct
     >>= return . filter notInHistory
-    >>= mapM (getNodes history)
+    >>= mapM (getNodes depth history)
     >>= return . concat
   where
     notInHistory e = e `notElem` history
 
-getNodes :: [CrawlNode] -> CrawlNode -> IO [CrawlNode]
-getNodes history node = 
+getNodes :: Int -> [CrawlNode] -> CrawlNode -> IO [CrawlNode]
+getNodes depth history node = 
   case node of
-    FileNode url -> return [node]
-    MenuNode url -> fmap ((:) node) (buildNodeTree url (node : history))
+    FileNode url -> 
+      return [node]
+    MenuNode url -> 
+      (fmap 
+        ((:) node) 
+        (if (depth - 1) == 0 
+          then return []
+          else (buildNodeTree url (depth - 1) (node : history))))
 
 nodifyLine :: MenuLine -> IO CrawlNode
 nodifyLine line = 
@@ -269,19 +275,14 @@ gopherGetMenu url =
 {------ Main -----}
 {-----------------}
 
-nodeToUrl (FileNode u) = u
-nodeToUrl (MenuNode u) = u
-
 main =
   Env.getArgs 
   >>= main' . configFromGetOpt . parseWithGetOpt
 
 getAndSaveFilePrintStatus :: GopherUrl -> IO ()
 getAndSaveFilePrintStatus url =
-  putStr ((urlToString url) ++ " ... ") >>
-  hFlush stdout >>
+  putStrLn ("(file) " ++ (urlToString url)) >>
   getAndSaveFile url >>
-  putStrLn " Saved." >>
   hFlush stdout
 
 main' :: ([String], Config) -> IO ()
@@ -290,7 +291,7 @@ main' (args, conf) =
     then putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
   else if (recursive conf) then
     putStrLn ":: Building Menu Tree" >>
-    buildNodeTree ("gopher.floodgap.com", "/", "70") []
+    getRecursively ("gopher.floodgap.com", "/", "70") conf
     >>= return . map nodeToUrl . filter isFileNode
     >>= \fileUrls ->
       putStrLn (":: Downloading Files: " ++ (show (length fileUrls)))
