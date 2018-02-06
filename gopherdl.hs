@@ -103,6 +103,10 @@ sanitizePath path =
 hostOfUrl :: GopherUrl -> String
 hostOfUrl (host, _, _) = host
 
+stringToGopherUrl :: String -> Maybe GopherUrl
+stringToGopherUrl =
+  uriToGopherUrl . parseURI . fixProto
+
 {--------------------------}
 {------ Argv Parsing ------}
 {--------------------------}
@@ -310,24 +314,32 @@ main =
 -- Check sanity of config and args
 main' :: ([String], Config) -> IO ()
 main' (args, conf)
-  | (help conf) || (length args) == 0 = showUsage 
-  | (length args) /= (length urls) = putStrLn "Cannot Parse URL(s)" >> showUsage
-  | otherwise = mapM_ (main'' conf) urls
-    where 
-      urls = catMaybes $ map (uriToGopherUrl . parseURI . fixProto) args
+  | helpFlag || noArg = showUsage 
+  | failedParsingUrl = putStrLn "Cannot Parse URL(s)" >> showUsage
+  | otherwise = mapM_ (main'' conf) urls 
+                >> putStrLn ":: Done"
+  where 
+    helpFlag = (help conf)
+    noArg = (length args) == 0
+    urls = catMaybes $ map stringToGopherUrl args
+    failedParsingUrl = (length args) /= (length urls)
 
 -- Handle each gopher URL
 main'' :: Config -> GopherUrl -> IO ()
-main'' conf url =
-  if (recursive conf) then
-    putStrLn ":: Building Menu Tree" >>
-    getRecursively url conf
-    >>= return . map remoteToUrl . filter isRemoteFile
-    >>= \fileUrls ->
-      putStrLn (":: Downloading Files: " ++ (show (length fileUrls)))
-      >> mapM_ getAndSaveFilePrintStatus fileUrls
-  else
-    putStrLn ":: Downloading Single File" >>
-    mapM_ getAndSaveFilePrintStatus [url]
-    -- >>= debugLog >> return ()
+main'' conf url
+  | (recursive conf) = 
+    putStrLn ":: Building Menu Tree" 
+    >> getRecursively url conf
+    >>= downloadSaveRemoteFiles conf
+  | otherwise =
+    putStrLn ":: Downloading Single File" 
+    >> mapM_ getAndSaveFilePrintStatus [url]
 
+downloadSaveRemoteFiles :: Config -> [Remote] -> IO ()
+downloadSaveRemoteFiles conf remotes
+  | (onlyMenus conf) = return ()
+  | otherwise =
+    putStrLn (":: Downloading Files: " ++ (show $ length fileUrls))
+    >> mapM_ getAndSaveFilePrintStatus fileUrls
+    where 
+      fileUrls = map remoteToUrl $ filter isRemoteFile remotes
