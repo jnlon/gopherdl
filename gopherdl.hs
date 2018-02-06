@@ -6,7 +6,7 @@ import Network.Socket
 import Control.Exception
 import Control.Monad
 import System.IO
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, doesFileExist)
 import Data.ByteString (hPut)
 import System.FilePath.Posix
 import qualified System.Environment as Env
@@ -258,6 +258,16 @@ getAndSaveFile url =
     >>= \bs -> save bs url False 
     >> return bs
 
+-- If file exists on disk, read it instead of accessing network
+getAndSaveMenuCheckExists :: GopherUrl -> IO [MenuLine]
+getAndSaveMenuCheckExists url = 
+  let path = urlToFilePath url True in
+  doesFileExist path
+  >>= \exists -> 
+    if exists 
+      then (readFile path >>= return . parseMenu . C.pack ) 
+      else getAndSaveMenu url
+
 getRecursively :: GopherUrl -> Config -> IO [Remote]
 getRecursively url conf =
   crawlMenu url conf (maxDepth conf) []
@@ -265,12 +275,16 @@ getRecursively url conf =
 crawlMenu :: GopherUrl -> Config -> Int -> [GopherUrl] -> IO [Remote]
 crawlMenu url conf depth history =
   putStrLn ((nchrs '-' ((maxDepth conf) - depth)) ++ "(menu) " ++ (urlToString url))
-  >> getAndSaveMenu url
+  >> getMenuMaybeFromDisk url
   >>= debugLog
   >>= return . map remotifyLine . filter okLine
   >>= mapM (getRemotes conf depth history)
   >>= return . concat
   where
+    getMenuMaybeFromDisk = 
+      if (clobber conf) 
+        then getAndSaveMenu
+        else getAndSaveMenuCheckExists
     okLine ml = 
       notInHistory ml && okHost ml
     notInHistory ml = 
