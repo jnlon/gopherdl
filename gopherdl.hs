@@ -254,23 +254,23 @@ getRecursively url conf =
 sameHost url1 url2 =
   (hostOfUrl url1) /= (hostOfUrl url1)
 
-crawlMenu :: GopherUrl -> Config -> Int -> [Remote] -> IO [Remote]
+crawlMenu :: GopherUrl -> Config -> Int -> [GopherUrl] -> IO [Remote]
 crawlMenu url conf depth history =
   putStrLn ("(menu) " ++ (urlToString url))
   >> getAndSaveMenu url
   >>= debugLog                -- Log the menu lines
   >>= return . filter okHost  -- filter out hosts based on config
-  >>= mapM nodifyLine
   >>= return . filter notInHistory
+  >>= mapM nodifyLine
   >>= mapM (getRemotes conf depth history)
   >>= return . concat
   where
     notInHistory e = 
-      e `notElem` history
+      (mlToUrl e) `notElem` history
     okHost ml = 
       not (spanHosts conf) && sameHost url (mlToUrl ml)
 
-getRemotes :: Config -> Int -> [Remote] -> Remote -> IO [Remote]
+getRemotes :: Config -> Int -> [GopherUrl] -> Remote -> IO [Remote]
 getRemotes conf depth history remote = 
   case remote of
     RemoteFile url -> return [remote]
@@ -278,7 +278,7 @@ getRemotes conf depth history remote =
       where 
         nextRemotes = if atMaxDepth then return [] else getNextRemotes
         atMaxDepth = (depth - 1) == 0
-        getNextRemotes = crawlMenu url conf (depth - 1) (remote : history)
+        getNextRemotes = crawlMenu url conf (depth - 1) (url : history)
 
 nodifyLine :: MenuLine -> IO Remote
 nodifyLine line = 
