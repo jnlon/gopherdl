@@ -1,6 +1,7 @@
 import Data.List
 import Data.Maybe
 import Data.Strings
+import Network.URI
 import Network.Socket
 import Control.Exception
 import Control.Monad
@@ -149,6 +150,9 @@ configFromGetOpt (options, arguments, errors) =
 parseWithGetOpt :: [String] -> ([Flag], [String], [String])
 parseWithGetOpt argv = getOpt RequireOrder optionSpec argv
 
+argvToConfig :: [String] -> ([String], Config)
+argvToConfig = configFromGetOpt . parseWithGetOpt
+
 {------------------------}
 {----- Menu Parsing -----}
 {------------------------}
@@ -277,7 +281,19 @@ gopherGetMenu url =
 
 main =
   Env.getArgs 
-  >>= main' . configFromGetOpt . parseWithGetOpt
+  >>= main' . argvToConfig
+
+fixProto s = 
+  let noProto s = (snd (strSplit "://" s)) == "" in
+  if (noProto s) then ("gopher://" ++ s) else s
+
+main' :: ([String], Config) -> IO ()
+main' (args, conf)
+  | (help conf) = showUsage 
+  | (length args) /= (length urls) = putStrLn "Cannot Parse URL(s)" >> showUsage
+  | otherwise = mapM_ (main'' conf) urls
+    where 
+      urls = catMaybes $ map (uriToGopherUrl . parseURI . fixProto) args
 
 getAndSaveFilePrintStatus :: GopherUrl -> IO ()
 getAndSaveFilePrintStatus url =
@@ -285,17 +301,30 @@ getAndSaveFilePrintStatus url =
   getAndSaveFile url >>
   hFlush stdout
 
-main' :: ([String], Config) -> IO ()
-main' (args, conf) =
-  if (help conf) || (length args) == 0 
-    then putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
-  else if (recursive conf) then
+showUsage = 
+  putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
+
+uriToGopherUrl :: Maybe URI -> Maybe GopherUrl
+uriToGopherUrl Nothing = Nothing
+uriToGopherUrl (Just uri) =
+  case (uriAuthority uri) of
+    Just auth -> Just ((getHost auth), (getPath uri), (getPort auth))
+    otherwise -> Nothing
+  where 
+    (?>>) a def = if a == "" then def else a
+    getHost auth = (uriRegName auth)
+    getPath uri = (uriPath uri) ?>> "/"
+    getPort auth = (strDrop 1 (uriPort auth)) ?>> "70"
+
+main'' :: Config -> GopherUrl -> IO ()
+main'' conf url =
+  if (recursive conf) then
     putStrLn ":: Building Menu Tree" >>
-    getRecursively ("gopher.floodgap.com", "/", "70") conf
+    getRecursively url conf
     >>= return . map nodeToUrl . filter isFileNode
     >>= \fileUrls ->
       putStrLn (":: Downloading Files: " ++ (show (length fileUrls)))
       >> mapM_ getAndSaveFilePrintStatus fileUrls
   else
-    gopherGetMenu ("gopher.floodgap.com", "/", "70")
-    >>= debugLog >> return ()
+    putStrLn $ show url
+    -- >>= debugLog >> return ()
