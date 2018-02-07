@@ -1,3 +1,4 @@
+import qualified Data.Set as Set
 import Data.List
 import Data.Maybe
 import Data.Strings
@@ -57,7 +58,7 @@ data Config = Config
 {------ Helpers ------}
 {---------------------}
 
-_debug = True
+_debug = False
 
 debugLog :: Show a => a -> IO a
 debugLog a =
@@ -68,12 +69,18 @@ debugLog a =
 
 recvAll :: Socket -> IO ByteString
 recvAll sock = 
-  BsNet.recv sock 4096 >>= recvMore
-  where 
-    recvMore bytes =
-      if (C.length bytes) == 0 
-        then return bytes 
-        else recvAll sock >>= return . C.append bytes 
+  recvAll' sock []
+  >>= \byteList ->
+    close sock >>
+    return (C.concat byteList)
+
+recvAll' :: Socket -> [ByteString] -> IO [ByteString]
+recvAll' sock lst = 
+  BsNet.recv sock 2048
+  >>= \bytes ->
+    if (C.length bytes) == 0 
+      then return lst
+      else recvAll' sock (bytes : lst)
 
 appendCRLF :: ByteString -> ByteString
 appendCRLF bs = C.append bs $ C.pack "\r\n"
@@ -248,10 +255,10 @@ gopherGetRaw (host, path, port) =
 
 urlToFilePath :: Bool ->  GopherUrl -> FilePath
 urlToFilePath isMenu (host, path, port) = 
-  joinPath $ 
-    [host] ++
+  joinPath $
+    ([host ++ ":" ++ port] ++
     (sanitizePath path) ++
-    (if isMenu then ["gophermap"] else [])
+    [(if isMenu then "gophermap" else "")])
 
 save :: ByteString -> GopherUrl -> Bool -> IO ()
 save bs url isMenu =
@@ -280,22 +287,31 @@ getAndSaveMenuCheckExists url =
   doesPathExist path
   >>= \exists -> 
     if exists 
-      then (readFile path >>= return . parseMenu . C.pack)
+      then (myReadFile path >>= return . parseMenu . C.pack)
       else getAndSaveMenu url
+  where 
+    myReadFile path =
+      openFile path ReadMode
+      >>= \h -> hSetEncoding h char8
+      >> hGetContents h
 
 getRecursively :: GopherUrl -> Config -> IO [Remote]
 getRecursively url conf =
-  crawlMenu url conf (maxDepth conf) []
+  crawlMenu url conf (maxDepth conf) Set.empty
 
-
-crawlMenu :: GopherUrl -> Config -> Int -> [GopherUrl] -> IO [Remote]
+crawlMenu :: GopherUrl -> Config -> Int -> Set.Set GopherUrl -> IO [Remote]
 crawlMenu url conf depth history =
-  putStrLn ((nchrs '-' ((maxDepth conf) - depth)) ++ "(menu) " ++ (urlToString url))
+  let depthLeft = ((maxDepth conf) - depth) 
+      depthMsg = "[" ++ (show depthLeft) ++ "/" ++ (show (maxDepth conf)) ++ "] " 
+  in
+  putStrLn ("(menu) " ++ depthMsg ++ (urlToString url))
   >> getMenuMaybeFromDisk url
   >>= debugLog
   >>= return . map remotifyLine . filter okLine
-  >>= mapM (getRemotes conf depth history)
-  >>= return . concat
+  >>= \remotes ->
+    let urlSet = (Set.fromList (map remoteToUrl remotes)) in
+    mapM (getRemotes conf depth (Set.union urlSet history)) remotes
+    >>= return . concat
   where
     getMenuMaybeFromDisk = 
       if (clobber conf) 
@@ -304,13 +320,13 @@ crawlMenu url conf depth history =
     okLine ml = 
       notInHistory ml && okHost ml && okPath ml
     notInHistory ml = 
-      (mlToUrl ml) `notElem` history
+      (mlToUrl ml) `Set.notMember` history
     okPath ml =
       (constrainPath conf) `implies` (commonPathBase url (mlToUrl ml))
     okHost ml =
       not (spanHosts conf) `implies` (sameHost url (mlToUrl ml))
 
-getRemotes :: Config -> Int -> [GopherUrl] -> Remote -> IO [Remote]
+getRemotes :: Config -> Int -> Set.Set GopherUrl -> Remote -> IO [Remote]
 getRemotes conf depth history remote = 
   case remote of
     RemoteFile url -> return [remote]
@@ -318,7 +334,7 @@ getRemotes conf depth history remote =
       where 
         nextRemotes = if atMaxDepth then return [] else getNextRemotes
         atMaxDepth = (depth - 1) == 0
-        getNextRemotes = crawlMenu url conf (depth - 1) (url : history)
+        getNextRemotes = crawlMenu url conf (depth - 1) history
 
 remotifyLine :: MenuLine -> Remote
 remotifyLine ml = 
@@ -334,8 +350,10 @@ gopherGetMenu url =
 
 getAndSaveFilePrintStatus :: GopherUrl -> IO ()
 getAndSaveFilePrintStatus url =
-  putStrLn ("(file) " ++ (urlToString url)) >>
-  getAndSaveFile url >>
+  putStr ("(file) " ++ (urlToString url) ++ " ") >>
+  hFlush stdout >>
+  getAndSaveFile url 
+  >>= \bs -> putStrLn ("(" ++ (show ((C.length bs) `div` 1000)) ++ "k)") >>
   hFlush stdout
 
 {-----------------}
