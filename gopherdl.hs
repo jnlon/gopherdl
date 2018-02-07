@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 import qualified Data.Set as Set
 import qualified Text.Regex.PCRE as Regex
 import qualified Text.Regex.PCRE.String as PCRE
@@ -21,6 +20,17 @@ import System.Console.GetOpt (OptDescr(Option),
                               getOpt,
                               ArgOrder(RequireOrder),
                               usageInfo)
+
+{- TODO
+  - Implement -w
+  - Find a smarter way of applying common filters to gophermaps and files
+  - rename and move myReadFile to helpers
+  - compile time debug switch from build tool (stack?)
+  - Smarter way of passing in regex... Maybe a "recursive options" data struct?
+  - Can regex be an empty string? That would declutter maybes and is probably fast...
+    - Clean up regex handling/conversion in general!
+  - Is there a better representation for gopherurl?
+-}
 
 sendAll = BsNet.sendAll
 type ByteString = C.ByteString
