@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 import qualified Data.Set as Set
 import qualified Text.Regex.PCRE as Regex
 import qualified Text.Regex.PCRE.String as PCRE
@@ -54,8 +55,8 @@ data Config = Config
   , clobber :: Bool
   , onlyMenus :: Bool
   , constrainPath :: Bool
-  , rejectRegex :: IO (Maybe Regex.Regex)
-  , delay :: Float }
+  , rejectRegex :: Maybe String
+  , delay :: Float } deriving Show
 
 {---------------------}
 {------ Helpers ------}
@@ -143,13 +144,16 @@ parseGopherUrl =
 {------ Argv Parsing ------}
 {--------------------------}
 
-compileRegex :: String -> IO (Maybe Regex.Regex)
+compileRegex :: Maybe String -> IO (Maybe Regex.Regex)
 compileRegex str = 
-  (PCRE.compile PCRE.compBlank PCRE.execBlank str)
-  >>= \er -> 
-    (case er of
-      Left (offset, string) -> putStrLn string >> (return Nothing)
-      Right regex -> (return (Just regex)))
+  case str of
+    Just str ->
+      ((PCRE.compile PCRE.compBlank PCRE.execBlank str)
+      >>= \cr -> 
+        (case cr of
+          Left (offset, string) -> putStrLn string >> hFlush stdout >> (return Nothing)
+          Right regex -> (return (Just regex))))
+    _ -> return Nothing
 
 optionSpec = 
   let argMaxDepth depth = (MaxDepth (read depth::Int)) 
@@ -184,10 +188,11 @@ findDelay def options =
   case (find isDelay options) of
     Just (Delay d) -> d
     _ -> def
-findRejectRegex :: String -> [Flag] -> String
+
+findRejectRegex :: Maybe String -> [Flag] -> Maybe String
 findRejectRegex def options =
   case (find isRejectRegex options) of
-    Just (RejectRegex restr) -> restr
+    Just (RejectRegex restr) -> Just restr
     _ -> def
 
 configFromGetOpt :: ([Flag], [String], [String]) -> ([String], Config)
@@ -201,7 +206,7 @@ configFromGetOpt (options, arguments, errors) =
            , onlyMenus = has OnlyMenus
            , constrainPath = has ConstrainPath
            , delay = findDelay 0.0 options
-           , rejectRegex = compileRegex $ findRejectRegex "" options})
+           , rejectRegex = findRejectRegex Nothing options})
   where 
     has opt = opt `elem` options 
 
@@ -317,22 +322,24 @@ getAndSaveMenuCheckExists url =
       >>= \h -> hSetEncoding h char8
       >> hGetContents h
 
-getRecursively :: GopherUrl -> Config -> IO [Remote]
-getRecursively url conf =
-  crawlMenu url conf (maxDepth conf) Set.empty
+getRecursively :: GopherUrl -> Config -> IO (Maybe Regex.Regex) -> IO [Remote]
+getRecursively url conf iocre =
+  iocre >>= \cr ->
+    crawlMenu url conf (maxDepth conf) Set.empty cr
 
-crawlMenu :: GopherUrl -> Config -> Int -> Set.Set GopherUrl -> IO [Remote]
-crawlMenu url conf depth history =
+crawlMenu :: GopherUrl -> Config -> Int -> Set.Set GopherUrl -> Maybe (Regex.Regex) -> IO [Remote]
+crawlMenu url conf depth history cr =
   let depthLeft = ((maxDepth conf) - depth) 
       depthMsg = "[" ++ (show depthLeft) ++ "/" ++ (show (maxDepth conf)) ++ "] " 
   in
   putStrLn ("(menu) " ++ depthMsg ++ (urlToString url))
   >> getMenuMaybeFromDisk url
   >>= debugLog
+  >>= filterM okUrl
   >>= return . map remotifyLine . filter okLine
   >>= \remotes ->
     let urlSet = (Set.fromList (map remoteToUrl remotes)) in
-    mapM (getRemotes conf depth (Set.union urlSet history)) remotes
+    mapM (getRemotes conf depth (Set.union urlSet history) cr) remotes
     >>= return . concat
   where
     getMenuMaybeFromDisk = 
@@ -341,6 +348,10 @@ crawlMenu url conf depth history =
         else getAndSaveMenuCheckExists
     okLine ml = 
       notInHistory ml && okHost ml && okPath ml
+    okUrl ml = 
+      if (isJust cr) 
+        then fmap not (urlMatchesRegex (fromJust cr) (mlToUrl ml))
+        else return True
     notInHistory ml = 
       (mlToUrl ml) `Set.notMember` history
     okPath ml =
@@ -348,15 +359,15 @@ crawlMenu url conf depth history =
     okHost ml =
       not (spanHosts conf) `implies` (sameHost url (mlToUrl ml))
 
-getRemotes :: Config -> Int -> Set.Set GopherUrl -> Remote -> IO [Remote]
-getRemotes conf depth history remote = 
+getRemotes :: Config -> Int -> Set.Set GopherUrl -> Maybe (Regex.Regex) -> Remote -> IO [Remote]
+getRemotes conf depth history cr remote = 
   case remote of
     RemoteFile url -> return [remote]
     RemoteMenu url -> fmap ((:) remote) nextRemotes
       where 
         nextRemotes = if atMaxDepth then return [] else getNextRemotes
         atMaxDepth = (depth - 1) == 0
-        getNextRemotes = crawlMenu url conf (depth - 1) history
+        getNextRemotes = crawlMenu url conf (depth - 1) history cr
 
 remotifyLine :: MenuLine -> Remote
 remotifyLine ml = 
@@ -403,10 +414,12 @@ main' (args, conf)
 main'' :: Config -> GopherUrl -> IO ()
 main'' conf url
   | (recursive conf) = 
+    let cre = (compileRegex (rejectRegex conf)) in
+    cre >>
     putStrLn ":: Downloading menus" >>
-    getRecursively url conf
+    getRecursively url conf cre
     >>= return . filter isRemoteFile
-    >>= \allRemotes -> filterM (goodRemote conf) allRemotes
+    >>= \allRemotes -> filterM (goodRemote conf cre) allRemotes
       >>= \remotes -> return (map remoteToUrl remotes)
         >>= downloadSaveUrls ((length allRemotes) - (length remotes))
   | otherwise =
@@ -419,17 +432,41 @@ urlExistsLocally url =
   doesPathExist (urlToFilePath False url)
   >>= debugLog
 
+urlMatchesRegex :: PCRE.Regex -> GopherUrl -> IO Bool
+urlMatchesRegex cr url =
+  stringMatchesRegex cr (urlToString url)
+
+stringMatchesRegex :: PCRE.Regex -> String -> IO Bool
+stringMatchesRegex re url =
+  PCRE.execute re url
+  >>= \result ->
+    return $ 
+      (case result of
+        Left err -> False
+        Right (Just _) -> True
+        Right _ -> False)
+
+goodRemote :: Config -> IO (Maybe Regex.Regex) -> Remote -> IO Bool
+goodRemote conf iore remote = 
+  iore >>= \re ->
+    sequence [(fmap not (regexMatches re remote)), (goodRemote' conf remote)]
+    >>= return . all (==True)
+
 -- True = Remove it
-goodRemote :: Config -> Remote -> IO Bool
-goodRemote conf remote 
+goodRemote' :: Config -> Remote -> IO Bool
+goodRemote' conf remote 
   | (onlyMenus conf) = return False
   | (clobber conf) = return True
   | otherwise = fmap not (urlExistsLocally (remoteToUrl remote))
 
+regexMatches re remote
+  | isJust re = urlMatchesRegex (fromJust re) (remoteToUrl remote)
+  | otherwise = return False
+
 downloadSaveUrls :: Int -> [GopherUrl]-> IO ()
 downloadSaveUrls skipping fileUrls = 
   let nFiles = (length fileUrls)
-      skippingMsg = "(skipping " ++ (show skipping) ++ " on disk)"
+      skippingMsg = "(skipping " ++ (show skipping) ++ ")"
       msg = (":: Downloading " ++ (show nFiles) ++ " files ")
   in
   putStrLn (msg ++ skippingMsg) >>
