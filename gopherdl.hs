@@ -1,4 +1,6 @@
 import qualified Data.Set as Set
+import qualified Text.Regex.PCRE as Regex
+import qualified Text.Regex.PCRE.String as PCRE
 import Data.List
 import Data.Maybe
 import Data.Strings
@@ -36,7 +38,8 @@ data Flag =
     | OnlyMenus
     | NoMenus
     | ConstrainPath
-    | Delay Float deriving (Show, Eq)
+    | RejectRegex String
+    | Delay Float deriving (Eq, Show)
 
 data Remote = 
     RemoteFile GopherUrl
@@ -51,8 +54,8 @@ data Config = Config
   , clobber :: Bool
   , onlyMenus :: Bool
   , constrainPath :: Bool
-  , delay :: Float
-  } deriving (Show)
+  , rejectRegex :: IO (Maybe Regex.Regex)
+  , delay :: Float }
 
 {---------------------}
 {------ Helpers ------}
@@ -140,9 +143,18 @@ parseGopherUrl =
 {------ Argv Parsing ------}
 {--------------------------}
 
+compileRegex :: String -> IO (Maybe Regex.Regex)
+compileRegex str = 
+  (PCRE.compile PCRE.compBlank PCRE.execBlank str)
+  >>= \er -> 
+    (case er of
+      Left (offset, string) -> putStrLn string >> (return Nothing)
+      Right regex -> (return (Just regex)))
+
 optionSpec = 
   let argMaxDepth depth = (MaxDepth (read depth::Int)) 
       argDelay delay = (Delay (read delay::Float)) 
+      rejectRegex s = (RejectRegex s)
   in
   [ Option "r" [] (NoArg Recursive) "Enable recursive downloads"
   , Option "l" [] (ReqArg argMaxDepth "n") "Maximum depth in recursive downloads"
@@ -151,13 +163,17 @@ optionSpec =
   , Option "c" [] (NoArg Clobber) "Enable file clobbering (overwrite existing)"
   , Option "m" [] (NoArg OnlyMenus) "Only download gopher menus"
   , Option "p" [] (NoArg ConstrainPath) "Only descend into child directories"
-  , Option "w" [] (ReqArg argDelay "secs") "Delay between downloads" ]
+  , Option "w" [] (ReqArg argDelay "secs") "Delay between downloads"
+  , Option "R" [] (ReqArg rejectRegex "pcre") "Reject URL based on pcre" ]
 
 isMaxDepth (MaxDepth _) = True
 isMaxDepth otherwise = False
 
 isDelay (Delay _) = True
 isDelay otherwise = False
+
+isRejectRegex (RejectRegex _) = True
+isRejectRegex otherwise = False
 
 findMaxDepth def options =
   case (find isMaxDepth options) of
@@ -167,6 +183,11 @@ findMaxDepth def options =
 findDelay def options =
   case (find isDelay options) of
     Just (Delay d) -> d
+    _ -> def
+findRejectRegex :: String -> [Flag] -> String
+findRejectRegex def options =
+  case (find isRejectRegex options) of
+    Just (RejectRegex restr) -> restr
     _ -> def
 
 configFromGetOpt :: ([Flag], [String], [String]) -> ([String], Config)
@@ -179,7 +200,8 @@ configFromGetOpt (options, arguments, errors) =
            , clobber = has Clobber
            , onlyMenus = has OnlyMenus
            , constrainPath = has ConstrainPath
-           , delay = findDelay 0.0 options })
+           , delay = findDelay 0.0 options
+           , rejectRegex = compileRegex $ findRejectRegex "" options})
   where 
     has opt = opt `elem` options 
 
@@ -363,8 +385,7 @@ getAndSaveFilePrintStatus url =
 -- Get Argv, turn it into a Config
 main :: IO ()
 main = Env.getArgs 
-  >>= debugLog . argvToConfig
-  >>= main'
+  >>= main' . argvToConfig
 
 -- Check sanity of config and args
 main' :: ([String], Config) -> IO ()
