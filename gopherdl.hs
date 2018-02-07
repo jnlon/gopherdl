@@ -102,6 +102,9 @@ nchrs chr n =
 putStrLnIf cond msg =
   if cond then putStrLn msg else return ()
 
+putStrIf cond msg =
+  if cond then putStr msg else return ()
+
 fixProto s = 
   let noProto s = (snd (strSplit "://" s)) == "" in
   if (noProto s) then ("gopher://" ++ s) else s
@@ -268,7 +271,7 @@ getAndSaveMenuCheckExists url =
   doesPathExist path
   >>= \exists -> 
     if exists 
-      then (readFile path >>= return . parseMenu . C.pack ) 
+      then (readFile path >>= return . parseMenu . C.pack)
       else getAndSaveMenu url
 
 getRecursively :: GopherUrl -> Config -> IO [Remote]
@@ -346,35 +349,42 @@ main' (args, conf)
     parsedUrls = catMaybes $ map parseGopherUrl args
     failedParsingUrl = (length args) /= (length parsedUrls)
 
+printFiles files = 
+  mapM (putStrLn . show) files >>
+  return files
+
 -- Handle each gopher URL
 main'' :: Config -> GopherUrl -> IO ()
 main'' conf url
   | (recursive conf) = 
-    putStrLn ":: Downloading Menus" >>
+    putStrLn ":: Downloading menus" >>
     getRecursively url conf
-    >>= downloadSaveRemoteFiles conf
+    >>= return . filter isRemoteFile
+    >>= \allRemotes -> filterM (goodRemote conf) allRemotes
+      >>= \remotes -> return (map remoteToUrl remotes)
+        >>= downloadSaveUrls ((length allRemotes) - (length remotes))
   | otherwise =
-    putStrLn ":: Downloading Single File" >>
+    putStrLn ":: Downloading single file" >>
     mapM_ getAndSaveFilePrintStatus [url]
 
+-- TODO: Assumes it's a normal, make correct???
+urlExistsLocally :: GopherUrl -> IO Bool
+urlExistsLocally url = 
+  doesPathExist (urlToFilePath False url)
+  >>= debugLog
 
-downloadSaveRemoteFiles :: Config -> [Remote] -> IO ()
-downloadSaveRemoteFiles conf remotes
-  | (onlyMenus conf) = return ()
-  | not (clobber conf) = 
-      filterM urlPathNotExists fileUrls
-      >>= \notOnDisk -> 
-        let numToSkip = ((length remotes) - (length notOnDisk)) in
-        putStrLnIf (numToSkip > 0) (":: Skipping " ++ (show numToSkip) ++ " Existing Files") 
-        >> downloadSaveRemoteFiles' notOnDisk
-  | otherwise = downloadSaveRemoteFiles' fileUrls
-  where 
-    fileUrls = map remoteToUrl $ filter isRemoteFile remotes
-    urlPathExists = doesPathExist . urlToFilePath False
-    urlPathNotExists p = urlPathExists p >>= return . not
+-- True = Remove it
+goodRemote :: Config -> Remote -> IO Bool
+goodRemote conf remote 
+  | (onlyMenus conf) = return False
+  | (clobber conf) = return True
+  | otherwise = fmap not (urlExistsLocally (remoteToUrl remote))
 
-downloadSaveRemoteFiles' :: [GopherUrl] -> IO ()
-downloadSaveRemoteFiles' fileUrls = 
-  let nFiles = (length fileUrls) in
-  putStrLnIf (nFiles > 0) (":: Downloading " ++ (show nFiles) ++ " Files")
-  >> mapM_ getAndSaveFilePrintStatus fileUrls
+downloadSaveUrls :: Int -> [GopherUrl]-> IO ()
+downloadSaveUrls skipping fileUrls = 
+  let nFiles = (length fileUrls)
+      skippingMsg = "(skipping " ++ (show skipping) ++ " on disk)"
+      msg = (":: Downloading " ++ (show nFiles) ++ " files ")
+  in
+  putStrLn (msg ++ skippingMsg) >>
+  mapM_ getAndSaveFilePrintStatus fileUrls
