@@ -34,7 +34,7 @@ data Flag =
     | Clobber
     | OnlyMenus
     | NoMenus
-    | AscendParent
+    | ConstrainPath
     | Delay Float deriving (Show, Eq)
 
 data Remote = 
@@ -49,7 +49,7 @@ data Config = Config
   , help :: Bool
   , clobber :: Bool
   , onlyMenus :: Bool
-  , ascendParent :: Bool
+  , constrainPath :: Bool
   , delay :: Float
   } deriving (Show)
 
@@ -109,12 +109,21 @@ fixProto s =
   let noProto s = (snd (strSplit "://" s)) == "" in
   if (noProto s) then ("gopher://" ++ s) else s
 
+commonPathBase prev next = 
+  strStartsWith (pathOfUrl next) (pathOfUrl prev) 
+
+implies cond fn =
+  if cond then fn else True
+
 sanitizePath path = 
   let nonEmptyString = (/=) 0 . sLen in
   filter nonEmptyString $ strSplitAll "/" path
 
 hostOfUrl :: GopherUrl -> String
 hostOfUrl (host, _, _) = host
+
+pathOfUrl :: GopherUrl -> String
+pathOfUrl (_, path, _) = path
 
 parseGopherUrl :: String -> Maybe GopherUrl
 parseGopherUrl =
@@ -134,7 +143,7 @@ optionSpec =
   , Option "h" [] (NoArg Help) "Show this help"
   , Option "c" [] (NoArg Clobber) "Enable file clobbering (overwrite existing)"
   , Option "m" [] (NoArg OnlyMenus) "Only download gopher menus"
-  , Option "p" [] (NoArg AscendParent) "Allow ascension to the parent directories"
+  , Option "p" [] (NoArg ConstrainPath) "Only descend into child directories"
   , Option "w" [] (ReqArg argDelay "secs") "Delay between downloads" ]
 
 isMaxDepth (MaxDepth _) = True
@@ -162,7 +171,7 @@ configFromGetOpt (options, arguments, errors) =
            , help = has Help
            , clobber = has Clobber
            , onlyMenus = has OnlyMenus
-           , ascendParent = has AscendParent
+           , constrainPath = has ConstrainPath
            , delay = findDelay 0.0 options })
   where 
     has opt = opt `elem` options 
@@ -278,6 +287,7 @@ getRecursively :: GopherUrl -> Config -> IO [Remote]
 getRecursively url conf =
   crawlMenu url conf (maxDepth conf) []
 
+
 crawlMenu :: GopherUrl -> Config -> Int -> [GopherUrl] -> IO [Remote]
 crawlMenu url conf depth history =
   putStrLn ((nchrs '-' ((maxDepth conf) - depth)) ++ "(menu) " ++ (urlToString url))
@@ -292,12 +302,13 @@ crawlMenu url conf depth history =
         then getAndSaveMenu
         else getAndSaveMenuCheckExists
     okLine ml = 
-      notInHistory ml && okHost ml
+      notInHistory ml && okHost ml && okPath ml
     notInHistory ml = 
       (mlToUrl ml) `notElem` history
+    okPath ml =
+      (constrainPath conf) `implies` (commonPathBase url (mlToUrl ml))
     okHost ml =
-      if (spanHosts conf) then True 
-                          else sameHost url (mlToUrl ml)
+      not (spanHosts conf) `implies` (sameHost url (mlToUrl ml))
 
 getRemotes :: Config -> Int -> [GopherUrl] -> Remote -> IO [Remote]
 getRemotes conf depth history remote = 
@@ -348,10 +359,6 @@ main' (args, conf)
     noArg = (length args) == 0
     parsedUrls = catMaybes $ map parseGopherUrl args
     failedParsingUrl = (length args) /= (length parsedUrls)
-
-printFiles files = 
-  mapM (putStrLn . show) files >>
-  return files
 
 -- Handle each gopher URL
 main'' :: Config -> GopherUrl -> IO ()
