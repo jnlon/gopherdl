@@ -83,6 +83,22 @@ debugLog a =
          >> hFlush stderr)
     else return ()) >> return a
 
+recvAllToFile :: Socket -> FilePath -> IO ()
+recvAllToFile sock path =
+  withFile path WriteMode (recvAllToHandle sock)
+
+recvAllToHandle :: Socket -> Handle -> IO ()
+recvAllToHandle sock hndl =
+  BsNet.recv sock 4096 
+  >>= \bytes -> 
+    hPut hndl bytes -- Write bytes to file
+    >> recvMore bytes
+  where 
+   recvMore bytes =
+     if (C.length bytes) == 0
+       then close sock
+       else recvAllToHandle sock hndl
+
 recvAll :: Socket -> IO ByteString
 recvAll sock = 
   BsNet.recv sock 4096
