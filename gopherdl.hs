@@ -85,18 +85,14 @@ debugLog a =
 
 recvAll :: Socket -> IO ByteString
 recvAll sock = 
-  recvAll' sock []
-  >>= \byteList ->
-    close sock >>
-    return (C.concat byteList)
-
-recvAll' :: Socket -> [ByteString] -> IO [ByteString]
-recvAll' sock lst = 
-  BsNet.recv sock 2048
-  >>= \bytes ->
-    if (C.length bytes) == 0 
-      then return lst
-      else recvAll' sock (bytes : lst)
+  BsNet.recv sock 4096
+  >>= recvMore 
+  >>= \bytes -> close sock >> return bytes
+  where 
+   recvMore bytes =
+     if (C.length bytes) == 0
+       then return bytes
+       else recvAll sock >>= return . C.append bytes
 
 appendCRLF :: ByteString -> ByteString
 appendCRLF bs = C.append bs $ C.pack "\r\n"
