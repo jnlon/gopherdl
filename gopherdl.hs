@@ -110,8 +110,8 @@ recvAll sock =
        then return bytes
        else recvAll sock >>= return . C.append bytes
 
-appendCRLF :: ByteString -> ByteString
-appendCRLF bs = C.append bs $ C.pack "\r\n"
+appendCRLF :: String -> String
+appendCRLF s = s ++ "\r\n"
 
 addrInfoHints :: AddrInfo
 addrInfoHints = defaultHints { addrSocketType = Stream }
@@ -292,7 +292,7 @@ gopherGetRaw url =
   >>= return . addrAddress . head 
   >>= \addr -> socket AF_INET Stream 0 
     >>= \sock -> connect sock addr
-      >> sendAll sock (appendCRLF $ C.pack (path url))
+      >> sendAll sock (C.pack $ appendCRLF (path url))
       >> recvAll sock
 
 urlToFilePath :: Bool ->  GopherUrl -> FilePath
