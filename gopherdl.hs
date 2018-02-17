@@ -4,7 +4,7 @@ import qualified Text.Regex.PCRE.String as PCRE
 import Data.List
 import Data.Maybe
 import Data.Strings
-import Network.URI
+import Network.URI (URI, parseURI, uriAuthority, uriPath, uriRegName, uriPort)
 import Network.Socket
 import Control.Exception
 import Control.Monad
@@ -29,7 +29,6 @@ import System.Console.GetOpt (OptDescr(Option),
   - Smarter way of passing in regex... Maybe a "recursive options" data struct?
   - Can regex be an empty string? That would declutter maybes and is probably fast...
     - Clean up regex handling/conversion in general!
-  - Is there a better representation for gopherurl?
 -}
 
 sendAll = BsNet.sendAll
@@ -38,7 +37,10 @@ type ByteString = C.ByteString
 -- type text \t path \t host \t port \r\n
 type MenuLine = (Char, ByteString, ByteString, ByteString, ByteString)
 -- host path port
-type GopherUrl = (String, String, String)
+data GopherUrl = GopherUrl 
+  { host :: String
+  , path :: String
+  , port :: String } deriving (Show, Eq, Ord)
 
 data Flag = 
       Recursive
@@ -115,23 +117,14 @@ showUsage =
   putStr $ usageInfo "gopherdl [options] [urls]" optionSpec
 
 sameHost url1 url2 =
-  (hostOfUrl url1) == (hostOfUrl url2)
-
-nchrs chr n = 
-  concat $ replicate n [chr]
-
-putStrLnIf cond msg =
-  if cond then putStrLn msg else return ()
-
-putStrIf cond msg =
-  if cond then putStr msg else return ()
+  (host url1) == (host url2)
 
 fixProto s = 
   let noProto s = (snd (strSplit "://" s)) == "" in
   if (noProto s) then ("gopher://" ++ s) else s
 
-commonPathBase prev next = 
-  strStartsWith (pathOfUrl next) (pathOfUrl prev) 
+commonPathBase prevUrl nextUrl = 
+  strStartsWith (path nextUrl) (path prevUrl) 
 
 implies cond fn =
   if cond then fn else True
@@ -139,12 +132,6 @@ implies cond fn =
 sanitizePath path = 
   let nonEmptyString = (/=) 0 . sLen in
   filter nonEmptyString $ strSplitAll "/" path
-
-hostOfUrl :: GopherUrl -> String
-hostOfUrl (host, _, _) = host
-
-pathOfUrl :: GopherUrl -> String
-pathOfUrl (_, path, _) = path
 
 parseGopherUrl :: String -> Maybe GopherUrl
 parseGopherUrl =
@@ -230,7 +217,11 @@ uriToGopherUrl :: Maybe URI -> Maybe GopherUrl
 uriToGopherUrl Nothing = Nothing
 uriToGopherUrl (Just uri) =
   case (uriAuthority uri) of
-    Just auth -> Just ((getHost auth), (getPath uri), (getPort auth))
+    Just auth -> 
+      Just $ GopherUrl
+        { host = (getHost auth)
+        , path = (getPath uri)
+        , port = (getPort auth) }
     otherwise -> Nothing
   where 
     (?>>) a def = if a == "" then def else a
@@ -243,12 +234,14 @@ uriToGopherUrl (Just uri) =
 {------------------------}
 
 mlToUrl :: MenuLine -> GopherUrl
-mlToUrl (_, _, path, host, port) =
-  (C.unpack host, C.unpack path, C.unpack port)
+mlToUrl (_, _, _path, _host, _port) =
+  GopherUrl { host = C.unpack _host 
+            , path = C.unpack _path
+            , port = C.unpack _port }
 
 urlToString :: GopherUrl -> String
-urlToString (host, path, port) =
-  host ++ ":" ++ port ++ path
+urlToString url =
+  (host url) ++ ":" ++ (port url) ++ (path url)
 
 validLine :: MenuLine -> Bool
 validLine line = 
@@ -282,19 +275,19 @@ parseMenuLine line =
 {---------------}
 
 gopherGetRaw :: GopherUrl -> IO ByteString
-gopherGetRaw (host, path, port) =
-  getAddrInfo (Just addrInfoHints) (Just host) (Just port)
+gopherGetRaw url =
+  getAddrInfo (Just addrInfoHints) (Just (host url)) (Just (port url))
   >>= return . addrAddress . head 
   >>= \addr -> socket AF_INET Stream 0 
     >>= \sock -> connect sock addr
-      >> sendAll sock (appendCRLF $ C.pack path)
+      >> sendAll sock (appendCRLF $ C.pack (path url))
       >> recvAll sock
 
 urlToFilePath :: Bool ->  GopherUrl -> FilePath
-urlToFilePath isMenu (host, path, port) = 
+urlToFilePath isMenu url = 
   joinPath $
-    ([host ++ ":" ++ port] ++
-    (sanitizePath path) ++
+    ([(host url) ++ ":" ++ (port url)] ++
+    (sanitizePath (path url)) ++
     [(if isMenu then "gophermap" else "")])
 
 save :: ByteString -> GopherUrl -> Bool -> IO ()
