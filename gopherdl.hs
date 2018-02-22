@@ -69,7 +69,7 @@ data Config = Config
   , clobber :: Bool
   , onlyMenus :: Bool
   , constrainPath :: Bool
-  , rejectRegex :: Maybe String
+  , rejectRegex :: String
   , delay :: Float } deriving Show
 
 -- Options only relevent for recursive retrieval
@@ -147,9 +147,6 @@ appendCRLF s = s ++ "\r\n"
 addrInfoHints :: AddrInfo
 addrInfoHints = defaultHints { addrSocketType = Stream }
 
-lineIsMenu :: MenuLine -> Bool
-lineIsMenu (t,_,_,_,_) = t == '1'
-
 isFileUrl url = (urlT url) == File
 
 showUsage = 
@@ -180,16 +177,14 @@ parseGopherUrl =
 {------ Argv Parsing ------}
 {--------------------------}
 
-compileRegex :: Maybe String -> IO (Maybe Regex.Regex)
-compileRegex str = 
-  case str of
-    Just str ->
-      ((PCRE.compile PCRE.compBlank PCRE.execBlank str)
-      >>= \cr -> 
-        (case cr of
-          Left (offset, string) -> putStrLn string >> hFlush stdout >> (return Nothing)
-          Right regex -> (return (Just regex))))
-    _ -> return Nothing
+compileRegex :: String -> IO (Maybe Regex.Regex)
+compileRegex "" = return Nothing
+compileRegex reStr = 
+  PCRE.compile PCRE.compBlank PCRE.execBlank reStr
+  >>= extractRegex
+  where 
+    extractRegex (Left (offset, string)) = putStrLn string >> hFlush stdout >> (return Nothing)
+    extractRegex (Right regex) = return (Just regex)
 
 optionSpec = 
   let argMaxDepth depth = (MaxDepth (read depth::Int)) 
@@ -225,10 +220,10 @@ findDelay def options =
     Just (Delay d) -> d
     _ -> def
 
-findRejectRegex :: Maybe String -> [Flag] -> Maybe String
+findRejectRegex :: String -> [Flag] -> String
 findRejectRegex def options =
   case (find isRejectRegex options) of
-    Just (RejectRegex restr) -> Just restr
+    Just (RejectRegex restr) -> restr
     _ -> def
 
 configFromGetOpt :: ([Flag], [String], [String]) -> ([String], Config)
@@ -242,7 +237,7 @@ configFromGetOpt (options, arguments, errors) =
            , onlyMenus = has OnlyMenus
            , constrainPath = has ConstrainPath
            , delay = findDelay 0.0 options
-           , rejectRegex = findRejectRegex Nothing options})
+           , rejectRegex = findRejectRegex "" options})
   where 
     has opt = opt `elem` options 
 
