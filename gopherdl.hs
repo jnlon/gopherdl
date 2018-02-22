@@ -74,39 +74,46 @@ data Config = Config
   , acceptRegex :: String
   , delay :: Float } deriving Show
 
--- Options only relevent for recursive retrieval
-data RecursiveConfig = RecursiveConfig
-  { rMaxDepth :: Int
-  , rSpanHosts :: Bool
-  , rClobber :: Bool
-  , rOnlyMenus :: Bool
-  , rConstrainPath :: Bool
-  , okByRegex :: GopherUrl -> IO Bool }
-
-{-makeRecursiveConf :: Config -> IO RecursiveConfig
-makeRecursiveConf conf = do
+okByRegex :: Config -> GopherUrl -> IO Bool
+okByRegex conf url = do
   compRejectRegex <- compileRegex (rejectRegex conf)
-  compAcceptRegex <- compileRegex (acceptRegex conf)-}
+  compAcceptRegex <- compileRegex (acceptRegex conf)
+  okByRegex' url compRejectRegex compAcceptRegex
 
-filterByType :: GopherUrl -> Bool -> Bool -> Bool
-filterByType url onlyMenus onlyFiles =
-  case (urlT url) of
-    Menu -> not onlyFiles
-    File -> not onlyMenus
+{-- Given 2 regex's, an accept and a reject, figure out whether the URL passes or not --}
+okByRegex' :: GopherUrl -> Maybe PCRE.Regex -> Maybe PCRE.Regex -> IO Bool
+okByRegex' url Nothing Nothing = return True
+okByRegex' url (Just reject) Nothing = fmap not $ urlMatchesRegex reject url
+okByRegex' url Nothing (Just accept) = urlMatchesRegex accept url
+okByRegex' url (Just reject) (Just accept) = do
+  overrideReject <- urlMatchesRegex accept url
+  rejectIt <- fmap not $ urlMatchesRegex reject url
+  return $ overrideReject || rejectIt
+
+okByExists :: Config -> GopherUrl -> IO Bool
+okByExists conf url
+  | (clobber conf)       = return True 
+  | (not (clobber conf)) = doesPathExist (urlToFilePath url)
+
+okByHost :: Config -> GopherUrl -> GopherUrl -> Bool
+okByHost conf url1 url2
+  | (spanHosts conf)       = True
+  | (not (spanHosts conf)) = sameHost url1 url2
+
+okByPath :: Config -> GopherUrl -> GopherUrl -> Bool
+okByPath conf url1 url2
+  | (constrainPath conf)       = commonPathBase url1 url2
+  | (not (constrainPath conf)) = True
 
 {- Accept vs reject behavior is as follows:
   . Just -A -> Only accept urls that match -A
   . Just -R -> Accept all but filter out those that match -R
   . -R and -A -> Download all, rejecting -R, but use -A for exceptions -}
-{-- Given 2 regex's, an accept and a reject, figure out whether the URL passes or not --}
-filterByRegex :: GopherUrl -> Maybe PCRE.Regex -> Maybe PCRE.Regex -> IO Bool
-filterByRegex url Nothing Nothing = return True
-filterByRegex url (Just reject) Nothing = fmap not $ urlMatchesRegex reject url
-filterByRegex url Nothing (Just accept) = urlMatchesRegex accept url
-filterByRegex url (Just reject) (Just accept) = do
-  overrideReject <- urlMatchesRegex accept url
-  rejectIt <- fmap not $ urlMatchesRegex reject url
-  return $ overrideReject || rejectIt
+okByType :: Config -> GopherUrl -> Bool
+okByType conf url
+  | (onlyMenus conf) = (urlT url) == Menu
+  | True             = True
+
 
 {---------------------}
 {------ Helpers ------}
@@ -336,16 +343,16 @@ gopherGetRaw url =
       >> sendAll sock (C.pack $ appendCRLF (path url))
       >> recvAll sock
 
-urlToFilePath :: Bool ->  GopherUrl -> FilePath
-urlToFilePath isMenu url = 
+urlToFilePath :: GopherUrl -> FilePath
+urlToFilePath url = 
   joinPath $
     ([(host url) ++ ":" ++ (port url)] ++
     (sanitizePath (path url)) ++
-    [(if isMenu then "gophermap" else "")])
+    [(if ((urlT url) == Menu) then "gophermap" else "")])
 
-save :: ByteString -> GopherUrl -> Bool -> IO ()
-save bs url isMenu =
-  let out = urlToFilePath isMenu url in
+save :: ByteString -> GopherUrl -> IO ()
+save bs url =
+  let out = urlToFilePath url in
   createDirectoryIfMissing True (dropFileName out) >>
   withFile out WriteMode writeIt
   where
@@ -354,19 +361,19 @@ save bs url isMenu =
 getAndSaveMenu :: GopherUrl -> IO [MenuLine]
 getAndSaveMenu url = 
   gopherGetRaw url 
-    >>= \bs -> save bs url True
+    >>= \bs -> save bs url
     >> return (parseMenu bs)
 
 getAndSaveFile :: GopherUrl -> IO ByteString
 getAndSaveFile url = 
   gopherGetRaw url 
-    >>= \bs -> save bs url False 
+    >>= \bs -> save bs url
     >> return bs
 
 -- If file exists on disk, read it instead of accessing network
 getAndSaveMenuCheckExists :: GopherUrl -> IO [MenuLine]
 getAndSaveMenuCheckExists url = 
-  let path = urlToFilePath True url in
+  let path = urlToFilePath url in
   doesPathExist path
   >>= \exists -> 
     if exists 
@@ -478,7 +485,7 @@ main'' conf url
 -- TODO: Assumes it's a normal, make correct???
 urlExistsLocally :: GopherUrl -> IO Bool
 urlExistsLocally url = 
-  doesPathExist (urlToFilePath False url)
+  doesPathExist (urlToFilePath url)
   >>= debugLog
 
 urlMatchesRegex :: PCRE.Regex -> GopherUrl -> IO Bool
