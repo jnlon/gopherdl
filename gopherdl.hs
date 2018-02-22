@@ -80,7 +80,10 @@ okByRegex conf url = do
   compAcceptRegex <- compileRegex (acceptRegex conf)
   okByRegex' url compRejectRegex compAcceptRegex
 
-{-- Given 2 regex's, an accept and a reject, figure out whether the URL passes or not --}
+{- Accept vs reject behavior is as follows:
+  . Just -A -> Only accept urls that match -A
+  . Just -R -> Accept all but filter out those that match -R
+  . -R and -A -> Download all, rejecting -R, but use -A for exceptions -}
 okByRegex' :: GopherUrl -> Maybe PCRE.Regex -> Maybe PCRE.Regex -> IO Bool
 okByRegex' url Nothing Nothing = return True
 okByRegex' url (Just reject) Nothing = fmap not $ urlMatchesRegex reject url
@@ -105,15 +108,10 @@ okByPath conf url1 url2
   | (constrainPath conf)       = commonPathBase url1 url2
   | (not (constrainPath conf)) = True
 
-{- Accept vs reject behavior is as follows:
-  . Just -A -> Only accept urls that match -A
-  . Just -R -> Accept all but filter out those that match -R
-  . -R and -A -> Download all, rejecting -R, but use -A for exceptions -}
 okByType :: Config -> GopherUrl -> Bool
 okByType conf url
   | (onlyMenus conf) = (urlT url) == Menu
   | True             = True
-
 
 {---------------------}
 {------ Helpers ------}
@@ -277,16 +275,13 @@ uriToGopherUrl (Just uri) =
   case (uriAuthority uri) of
     Just auth -> 
       Just $ GopherUrl
-        { host = (getHost auth)
-        , path = (getPath uri)
-        , port = (getPort auth)
+        { host = uriRegName auth
+        , path = uriPath uri ?>> "/"
+        , port = strDrop 1 (uriPort auth) ?>> "70"
         , urlT = Menu }
     otherwise -> Nothing
   where 
     (?>>) a def = if a == "" then def else a
-    getHost auth = (uriRegName auth)
-    getPath uri = (uriPath uri) ?>> "/"
-    getPort auth = (strDrop 1 (uriPort auth)) ?>> "70"
 
 {------------------------}
 {----- Menu Parsing -----}
