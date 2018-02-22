@@ -59,6 +59,7 @@ data Flag =
     | NoMenus
     | ConstrainPath
     | RejectRegex String
+    | AcceptRegex String
     | Delay Float deriving (Eq, Show, Ord)
 
 data Config = Config
@@ -70,6 +71,7 @@ data Config = Config
   , onlyMenus :: Bool
   , constrainPath :: Bool
   , rejectRegex :: String
+  , acceptRegex :: String
   , delay :: Float } deriving Show
 
 -- Options only relevent for recursive retrieval
@@ -80,6 +82,11 @@ data RecursiveConfig = RecursiveConfig
   , rOnlyMenus :: Bool
   , rConstrainPath :: Bool
   , okByRegex :: GopherUrl -> IO Bool }
+
+{-makeRecursiveConf :: Config -> IO RecursiveConfig
+makeRecursiveConf conf = do
+  compRejectRegex <- compileRegex (rejectRegex conf)
+  compAcceptRegex <- compileRegex (acceptRegex conf)-}
 
 filterByType :: GopherUrl -> Bool -> Bool -> Bool
 filterByType url onlyMenus onlyFiles =
@@ -183,7 +190,7 @@ compileRegex reStr =
   PCRE.compile PCRE.compBlank PCRE.execBlank reStr
   >>= extractRegex
   where 
-    extractRegex (Left (offset, string)) = putStrLn string >> hFlush stdout >> (return Nothing)
+    extractRegex (Left (offset, errs)) = putStrLn errs >> hFlush stdout >> (return Nothing)
     extractRegex (Right regex) = return (Just regex)
 
 optionSpec = 
@@ -210,6 +217,9 @@ isDelay otherwise = False
 isRejectRegex (RejectRegex _) = True
 isRejectRegex otherwise = False
 
+isAcceptRegex (AcceptRegex _) = True
+isAcceptRegex otherwise = False
+
 findMaxDepth def options =
   case (find isMaxDepth options) of
     Just (MaxDepth d) -> d
@@ -226,6 +236,12 @@ findRejectRegex def options =
     Just (RejectRegex restr) -> restr
     _ -> def
 
+findAcceptRegex :: String -> [Flag] -> String
+findAcceptRegex def options =
+  case (find isAcceptRegex options) of
+    Just (AcceptRegex restr) -> restr
+    _ -> def
+
 configFromGetOpt :: ([Flag], [String], [String]) -> ([String], Config)
 configFromGetOpt (options, arguments, errors) = 
   ( arguments, 
@@ -237,7 +253,8 @@ configFromGetOpt (options, arguments, errors) =
            , onlyMenus = has OnlyMenus
            , constrainPath = has ConstrainPath
            , delay = findDelay 0.0 options
-           , rejectRegex = findRejectRegex "" options})
+           , rejectRegex = findRejectRegex "" options
+           , acceptRegex = findAcceptRegex "" options })
   where 
     has opt = opt `elem` options 
 
