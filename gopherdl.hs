@@ -5,7 +5,6 @@ import Data.List
 import Data.Maybe
 import Data.Strings
 import Network.URI (URI, parseURI, uriAuthority, uriPath, uriRegName, uriPort)
-import Network.Socket
 import Control.Exception
 import Control.Monad
 import System.IO
@@ -13,13 +12,13 @@ import System.Directory (createDirectoryIfMissing, doesPathExist)
 import Data.ByteString (hPut)
 import System.FilePath.Posix
 import qualified System.Environment as Env
-import qualified Network.Socket.ByteString as BsNet
+import Network.Socket.ByteString (sendAll, recv)
 import qualified Data.ByteString.Char8 as C
-import System.Console.GetOpt (OptDescr(Option),
-                              ArgDescr(NoArg, ReqArg),
-                              getOpt,
-                              ArgOrder(RequireOrder),
-                              usageInfo)
+import System.Console.GetOpt (OptDescr(Option), ArgDescr(NoArg, ReqArg),
+                              getOpt, ArgOrder(RequireOrder), usageInfo)
+import Network.Socket (Socket, AddrInfo, addrSocketType, addrAddress, 
+                       close, connect, defaultHints, SocketType(Stream), 
+                       getAddrInfo, Family(AF_INET), socket)
 
 {- TODO
   - Implement -w
@@ -31,7 +30,6 @@ import System.Console.GetOpt (OptDescr(Option),
     - Clean up regex handling/conversion in general!
 -}
 
-sendAll = BsNet.sendAll
 type ByteString = C.ByteString
 
 -- type text \t path \t host \t port \r\n
@@ -132,7 +130,7 @@ recvAllToFile sock path =
 
 recvAllToHandle :: Socket -> Handle -> IO ()
 recvAllToHandle sock hndl =
-  BsNet.recv sock 4096 
+  recv sock 4096 
   >>= \bytes -> 
     hPut hndl bytes -- Write bytes to file
     >> recvMore bytes
@@ -144,7 +142,7 @@ recvAllToHandle sock hndl =
 
 recvAll :: Socket -> IO ByteString
 recvAll sock = 
-  BsNet.recv sock 4096
+  recv sock 4096
   >>= recvMore 
   >>= \bytes -> close sock >> return bytes
   where 
@@ -407,9 +405,7 @@ crawlMenu url conf depth history cr =
     okLine ml = 
       notInHistory ml && okHost ml && okPath ml
     okUrl ml = 
-      if (isJust cr) 
-        then fmap not (urlMatchesRegex (fromJust cr) (mlToUrl ml))
-        else return True
+      if (isJust cr) then fmap not (urlMatchesRegex (fromJust cr) (mlToUrl ml)) else return True
     notInHistory ml = 
       (mlToUrl ml) `Set.notMember` history
     okPath ml =
