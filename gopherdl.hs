@@ -14,6 +14,7 @@ import System.FilePath.Posix
 import qualified System.Environment as Env
 import Network.Socket.ByteString (sendAll, recv)
 import qualified Data.ByteString.Char8 as C
+import Data.ByteString.Char8 (ByteString)
 import System.Console.GetOpt (OptDescr(Option), ArgDescr(NoArg, ReqArg),
                               getOpt, ArgOrder(RequireOrder), usageInfo)
 import Network.Socket (Socket, AddrInfo, addrSocketType, addrAddress, 
@@ -22,15 +23,7 @@ import Network.Socket (Socket, AddrInfo, addrSocketType, addrAddress,
 
 {- TODO
   - Implement -w
-  - Find a smarter way of applying common filters to gophermaps and files
-  - rename and move myReadFile to helpers
-  - compile time debug switch from build tool (stack?)
-  - Smarter way of passing in regex... Maybe a "recursive options" data struct?
-  - Can regex be an empty string? That would declutter maybes and is probably fast...
-    - Clean up regex handling/conversion in general!
--}
-
-type ByteString = C.ByteString
+  - compile time debug switch from build tool (stack?) -}
 
 -- type text \t path \t host \t port \r\n
 type MenuLine = (Char, ByteString, ByteString, ByteString, ByteString)
@@ -71,29 +64,24 @@ data Config = Config
   , acceptRegex :: String
   , delay :: Float } deriving Show
 
-okByRegex :: Config -> GopherUrl -> IO Bool
-okByRegex conf url = do
-  compRejectRegex <- compileRegex (rejectRegex conf)
+okByAcceptRegex :: Config -> GopherUrl -> IO Bool
+okByAcceptRegex conf url = do
   compAcceptRegex <- compileRegex (acceptRegex conf)
-  okByRegex' url compRejectRegex compAcceptRegex
+  case compAcceptRegex of
+    Just re -> urlMatchesRegex re url
+    otherwise -> return True
 
-{- Accept vs reject behavior is as follows:
-  . Just -A -> Only accept urls that match -A
-  . Just -R -> Accept all but filter out those that match -R
-  . -R and -A -> Download all, rejecting -R, but use -A for exceptions -}
-okByRegex' :: GopherUrl -> Maybe PCRE.Regex -> Maybe PCRE.Regex -> IO Bool
-okByRegex' url Nothing Nothing = return True
-okByRegex' url (Just reject) Nothing = fmap not $ urlMatchesRegex reject url
-okByRegex' url Nothing (Just accept) = urlMatchesRegex accept url
-okByRegex' url (Just reject) (Just accept) = do
-  overrideReject <- urlMatchesRegex accept url
-  rejectIt <- fmap not $ urlMatchesRegex reject url
-  return $ overrideReject || rejectIt
+okByRejectRegex :: Config -> GopherUrl -> IO Bool
+okByRejectRegex conf url = do
+  compRejectRegex <- compileRegex (rejectRegex conf)
+  case compRejectRegex of
+    Just re -> fmap not $ urlMatchesRegex re url
+    otherwise -> return True
 
 okByFileExists :: Config -> GopherUrl -> IO Bool
 okByFileExists conf url
   | (clobber conf)       = return True 
-  | (not (clobber conf)) = doesPathExist (urlToFilePath url)
+  | (not (clobber conf)) = fmap not $ doesPathExist (urlToFilePath url)
 
 okByHost :: Config -> GopherUrl -> GopherUrl -> Bool
 okByHost conf url1 url2
@@ -107,8 +95,8 @@ okByPath conf url1 url2
 
 okByType :: Config -> GopherUrl -> Bool
 okByType conf url
-  | (onlyMenus conf) = (urlT url) == Menu
-  | True             = True
+  | (onlyMenus conf)       = (urlT url) == Menu
+  | (not (onlyMenus conf)) = True
 
 {---------------------}
 {------ Helpers ------}
@@ -119,10 +107,10 @@ _debug = False
 (&&>) :: Monad m => m Bool -> m Bool -> m Bool
 (&&>) = liftM2 (&&)
 
-debugLog :: Show a => a -> IO a
-debugLog a =
+debugLog :: Show a => String -> a -> IO a
+debugLog what a =
   (if _debug
-    then (hPutStrLn stderr ("DEBUG: " ++ show a) 
+    then (hPutStrLn stderr (what ++ " => " ++ (show a)) 
          >> hFlush stderr)
     else return ()) >> return a
 
@@ -203,6 +191,7 @@ optionSpec =
   let argMaxDepth depth = (MaxDepth (read depth::Int)) 
       argDelay delay = (Delay (read delay::Float)) 
       rejectRegex s = (RejectRegex s)
+      acceptRegex s = (AcceptRegex s)
   in
   [ Option "r" [] (NoArg Recursive) "Enable recursive downloads"
   , Option "l" [] (ReqArg argMaxDepth "n") "Maximum depth in recursive downloads"
@@ -212,7 +201,8 @@ optionSpec =
   , Option "m" [] (NoArg OnlyMenus) "Only download gopher menus"
   , Option "p" [] (NoArg ConstrainPath) "Only descend into child directories"
   , Option "w" [] (ReqArg argDelay "secs") "Delay between downloads"
-  , Option "R" [] (ReqArg rejectRegex "pcre") "Reject URL based on pcre" ]
+  , Option "R" [] (ReqArg rejectRegex "pcre") "Reject URL based on pcre" 
+  , Option "A" [] (ReqArg acceptRegex "pcre") "Accept URL based on pcre" ]
 
 isMaxDepth (MaxDepth _) = True
 isMaxDepth otherwise = False
@@ -391,42 +381,62 @@ getRecursively :: GopherUrl -> Config -> IO [GopherUrl]
 getRecursively url conf =
   crawlMenu url conf (maxDepth conf) Set.empty
 
-crawlMenu :: GopherUrl -> Config -> Int -> Set.Set GopherUrl -> IO [GopherUrl]
-crawlMenu url conf depth history =
+-- Apply filters only relevent to a URL
+goodMenuUrl conf currentMenuUrl url = 
+  okByRejectRegex conf url >>= \okRegex -> 
+    return $ 
+      okRegex
+      && okByPath conf currentMenuUrl url 
+      && okByHost conf currentMenuUrl url
+      && okByType conf url
+
+goodFileUrl conf url =
+  okByAcceptRegex conf url >>= \okAcceptRegex -> 
+  okByRejectRegex conf url >>= \okRejectRegex -> 
+  okByFileExists conf url >>= \okFileExists ->
+  return $ 
+    okAcceptRegex 
+    && okRejectRegex
+    && okFileExists
+    && okByType conf url 
+
+-- crawlFilter conf refUrl url =
+
+putCrawlStatusLn conf depth refUrl = 
   let depthLeft = ((maxDepth conf) - depth) 
       depthStr = "[" ++ (show depthLeft) ++ "/" ++ (show (maxDepth conf)) ++ "] " 
-      menuStr = "(menu) " ++ depthStr ++ (urlToString url)
   in
-  putStrLn menuStr >>
-  getMenuFromDiskOrNet conf url
-  >>= return . map mlToUrl                -- Convert lines to urls 
-  >>= filterM okUrlIO . filter okUrlPure  -- Filter urls by config
+  putStrLn $ "(menu) " ++ depthStr ++ (urlToString refUrl)
+
+
+crawlMenu :: GopherUrl -> Config -> Int -> Set.Set GopherUrl -> IO [GopherUrl]
+crawlMenu refUrl conf depth history =
+  let notInHistory mlUrl = mlUrl `Set.notMember` history
+  in
+  putCrawlStatusLn conf depth refUrl >>
+  getMenuFromDiskOrNet conf refUrl
+  >>= return . filter notInHistory . map mlToUrl   -- Convert lines to urls 
+  >>= filterM (goodMenuUrl conf refUrl)            -- Filter urls by config 
+  >>= debugLog "GOODURLS\n"
   >>= \remotes ->
     let newHistory = Set.union (Set.fromList remotes) history  in
-    msum $ map (getRemotes conf depth newHistory) remotes
-  where
-    okUrlIO mlUrl = 
-      okByFileExists conf mlUrl &&> okByRegex conf mlUrl
-    okUrlPure mlUrl = 
-      notInHistory mlUrl && okHost mlUrl && okPath mlUrl && okType mlUrl
-    okPath mlUrl = okByPath conf url mlUrl
-    okHost mlUrl = okByHost conf url mlUrl
-    okType mlUrl = okByType conf mlUrl
-    notInHistory mlUrl = mlUrl `Set.notMember` history
+    mapM (getRemotes conf depth newHistory) remotes
+    >>= return . concat
 
 getRemotes :: Config -> Int -> Set.Set GopherUrl -> GopherUrl -> IO [GopherUrl]
 getRemotes conf depth history url = 
+  debugLog "getRemotes" url >>
   case (urlT url) of
     File -> return [url]
     Menu -> fmap ((:) url) nextRemotes
       where 
-        nextRemotes = if atMaxDepth then return [] else getNextRemotes
         atMaxDepth = (depth - 1) == 0
+        nextRemotes = if atMaxDepth then return [] else getNextRemotes
         getNextRemotes = crawlMenu url conf (depth - 1) history
 
 gopherGetMenu :: GopherUrl -> IO (ByteString, [MenuLine])
 gopherGetMenu url = 
-  debugLog ("gopherGetMenu: " ++ (urlToString url))
+  debugLog "gopherGetMenu" ("gopherGetMenu: " ++ (urlToString url))
   >> gopherGetRaw url 
   >>= \bytes -> return $ (bytes, parseMenu bytes)
 
@@ -466,54 +476,21 @@ main'' conf url
     putStrLn ":: Downloading menus" >>
     getRecursively url conf
     >>= return . filter isFileUrl
-    >>= \allRemotes -> filterM (goodUrl conf) allRemotes
-      >>= \remotes -> downloadSaveUrls ((length allRemotes) - (length remotes)) remotes
+    >>= filterM (goodFileUrl conf)
+    >>= getAndSaveUrls
   | otherwise =
     putStrLn ":: Downloading single file" >>
     mapM_ getAndSaveFilePrintStatus [url]
 
--- TODO: Assumes it's a normal, make correct???
-urlExistsLocally :: GopherUrl -> IO Bool
-urlExistsLocally url = 
-  doesPathExist (urlToFilePath url)
-  >>= debugLog
-
 urlMatchesRegex :: PCRE.Regex -> GopherUrl -> IO Bool
-urlMatchesRegex cr url =
-  stringMatchesRegex cr (urlToString url)
+urlMatchesRegex re url = do
+  result <- PCRE.execute re (urlToString url)
+  return $ 
+    case result of
+      Right (Just _) -> True
+      otherwise -> False
 
-stringMatchesRegex :: PCRE.Regex -> String -> IO Bool
-stringMatchesRegex re url =
-  PCRE.execute re url
-  >>= \result ->
-    return $ 
-      (case result of
-        Left err -> False
-        Right (Just _) -> True
-        Right _ -> False)
-
-goodUrl :: Config -> GopherUrl -> IO Bool
-goodUrl conf url = 
-    -- sequence [(fmap not (regexMatches re url)), (goodUrl' conf url)]
-  sequence [(goodUrl' conf url)]
-  >>= return . all (==True)
-
--- True = Remove it
-goodUrl' :: Config -> GopherUrl -> IO Bool
-goodUrl' conf url
-  | (onlyMenus conf) = return False
-  | (clobber conf) = return True
-  | otherwise = fmap not (urlExistsLocally url)
-
-regexMatches re url
-  | isJust re = urlMatchesRegex (fromJust re) url
-  | otherwise = return False
-
-downloadSaveUrls :: Int -> [GopherUrl]-> IO ()
-downloadSaveUrls skipping fileUrls = 
-  let nFiles = (length fileUrls)
-      skippingMsg = "(skipping " ++ (show skipping) ++ ")"
-      msg = (":: Downloading " ++ (show nFiles) ++ " files ")
-  in
-  putStrLn (msg ++ skippingMsg) >>
+getAndSaveUrls :: [GopherUrl]-> IO ()
+getAndSaveUrls fileUrls = 
+  putStrLn (":: Downloading " ++ (show (length fileUrls)) ++ " files ") >>
   mapM_ getAndSaveFilePrintStatus fileUrls
