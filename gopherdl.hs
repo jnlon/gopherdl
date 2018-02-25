@@ -50,8 +50,7 @@ data Flag =
     | NoMenus
     | ConstrainPath
     | RejectRegex String
-    | AcceptRegex String
-    | Delay Float deriving (Eq, Show, Ord)
+    | AcceptRegex String deriving (Eq, Show, Ord)
 
 data Config = Config
  {  recursive :: Bool
@@ -62,8 +61,7 @@ data Config = Config
   , onlyMenus :: Bool
   , constrainPath :: Bool
   , rejectRegex :: String
-  , acceptRegex :: String
-  , delay :: Float } deriving Show
+  , acceptRegex :: String } deriving Show
 
 {---------------------}
 {------ Helpers ------}
@@ -204,7 +202,6 @@ goodFileUrl conf url =
 
 optionSpec = 
   let argMaxDepth depth = (MaxDepth (read depth::Int)) 
-      argDelay delay = (Delay (read delay::Float)) 
   in
   [ Option "r" [] (NoArg Recursive) "Enable recursive downloads"
   , Option "l" [] (ReqArg argMaxDepth "n") "Maximum depth in recursive downloads"
@@ -213,15 +210,11 @@ optionSpec =
   , Option "c" [] (NoArg Clobber) "Enable file clobbering (overwrite existing)"
   , Option "m" [] (NoArg OnlyMenus) "Only download gopher menus"
   , Option "p" [] (NoArg ConstrainPath) "Only descend into child directories"
-  , Option "w" [] (ReqArg argDelay "secs") "Delay between downloads"
   , Option "R" [] (ReqArg RejectRegex "pcre") "Reject URL based on pcre" 
   , Option "A" [] (ReqArg AcceptRegex "pcre") "Accept URL based on pcre" ]
 
 isMaxDepth (MaxDepth _) = True
 isMaxDepth otherwise = False
-
-isDelay (Delay _) = True
-isDelay otherwise = False
 
 isRejectRegex (RejectRegex _) = True
 isRejectRegex otherwise = False
@@ -229,43 +222,28 @@ isRejectRegex otherwise = False
 isAcceptRegex (AcceptRegex _) = True
 isAcceptRegex otherwise = False
 
-findMaxDepth def options =
-  case (find isMaxDepth options) of
-    Just (MaxDepth d) -> d
-    _ -> def
-
-findDelay def options =
-  case (find isDelay options) of
-    Just (Delay d) -> d
-    _ -> def
-
-findRejectRegex :: String -> [Flag] -> String
-findRejectRegex def options =
-  case (find isRejectRegex options) of
-    Just (RejectRegex restr) -> restr
-    _ -> def
-
-findAcceptRegex :: String -> [Flag] -> String
-findAcceptRegex def options =
-  case (find isAcceptRegex options) of
-    Just (AcceptRegex restr) -> restr
-    _ -> def
-
 configFromGetOpt :: ([Flag], [String], [String]) -> ([String], Config)
 configFromGetOpt (options, arguments, errors) = 
   ( arguments, 
     Config { recursive = has Recursive
-           , maxDepth = findMaxDepth 99 options
+           , maxDepth = maybeGetOpt isMaxDepth (getIntOr 99)
            , spanHosts = has SpanHosts
            , help = has Help
            , clobber = has Clobber
            , onlyMenus = has OnlyMenus
            , constrainPath = has ConstrainPath
-           , delay = findDelay 0.0 options
-           , rejectRegex = findRejectRegex "" options
-           , acceptRegex = findAcceptRegex "" options })
+           , rejectRegex = maybeGetOpt isRejectRegex (getStringOr "") 
+           , acceptRegex = maybeGetOpt isAcceptRegex (getStringOr "") })
   where 
     has opt = opt `elem` options 
+    maybeGetOpt finder getter = getter (find finder options)
+
+    getIntOr _default (Just (MaxDepth d)) = d
+    getIntOr _default _ = _default
+
+    getStringOr _default (Just (AcceptRegex s)) = s
+    getStringOr _default (Just (RejectRegex s)) = s
+    getStringOr _default _ = _default
 
 parseWithGetOpt :: [String] -> ([Flag], [String], [String])
 parseWithGetOpt argv = getOpt RequireOrder optionSpec argv
@@ -273,11 +251,6 @@ parseWithGetOpt argv = getOpt RequireOrder optionSpec argv
 argvToConfig :: [String] -> ([String], Config)
 argvToConfig = configFromGetOpt . parseWithGetOpt
 
-
-readFileU8 path = 
-  openFile path ReadMode
-  >>= \h -> hSetEncoding h char8
-  >> hGetContents h
 
 {------------------------}
 {----- Menu Parsing -----}
@@ -367,6 +340,11 @@ getAndSaveFile url =
 getMenuFromDiskOrNet conf
   | (clobber conf)       = getAndSaveMenuNet
   | (not (clobber conf)) = getAndSaveMenuMaybeDisk
+
+readFileU8 path = 
+  openFile path ReadMode
+  >>= \h -> hSetEncoding h char8
+  >> hGetContents h
 
 getAndSaveMenuDisk path =
   readFileU8 path 
