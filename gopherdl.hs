@@ -251,7 +251,6 @@ parseWithGetOpt argv = getOpt RequireOrder optionSpec argv
 argvToConfig :: [String] -> ([String], Config)
 argvToConfig = configFromGetOpt . parseWithGetOpt
 
-
 {------------------------}
 {----- Menu Parsing -----}
 {------------------------}
@@ -271,10 +270,8 @@ validLine :: MenuLine -> Bool
 validLine line = 
   validPath line && validType line
   where 
-    validPath (_, _, path, _, _) = 
-      sStartsWith path (C.pack "/")
-    validType (t, _, _, _, _) = 
-      t `notElem` ['7', '2', '3', '8', 'T']
+    validPath (_, _, path, _, _) = sStartsWith path (C.pack "/")
+    validType (t, _, _, _, _) = t `notElem` ['7', '2', '3', '8', 'T']
 
 parseMenu :: ByteString -> [MenuLine]
 parseMenu rawMenu = 
@@ -298,6 +295,11 @@ parseMenuLine line =
 {------ IO -----}
 {---------------}
 
+readFileU8 path = 
+  openFile path ReadMode
+  >>= \h -> hSetEncoding h char8
+  >> hGetContents h
+
 recvAll :: Socket -> IO ByteString
 recvAll sock = 
   recv sock 4096
@@ -318,45 +320,39 @@ gopherGetRaw url =
       >> sendAll sock (C.pack $ appendCRLF (path url))
       >> recvAll sock
 
-save :: ByteString -> GopherUrl -> IO ()
-save bs url =
-  let out = urlToFilePath url in
-  createDirectoryIfMissing True (dropFileName out) >>
-  withFile out WriteMode writeIt
+saveToFile :: ByteString -> FilePath -> IO ()
+saveToFile bs path =
+  createDirectoryIfMissing True (dropFileName path) >>
+  withFile path WriteMode writeIt
   where
     writeIt handle = hPut handle bs >> hFlush handle
 
-getAndSaveMenuNet :: GopherUrl -> IO [MenuLine]
-getAndSaveMenuNet url = 
-  getAndSaveFile url 
+getAndSaveMenuFromNet :: GopherUrl -> IO [MenuLine]
+getAndSaveMenuFromNet url = 
+  getAndSaveToFile url 
   >>= return . parseMenu
 
-getAndSaveFile :: GopherUrl -> IO ByteString
-getAndSaveFile url = 
+getAndSaveToFile :: GopherUrl -> IO ByteString
+getAndSaveToFile url = 
   gopherGetRaw url 
-    >>= \bs -> save bs url
+    >>= \bs -> saveToFile bs (urlToFilePath url)
     >> return bs
 
-getMenuFromDiskOrNet conf
-  | (clobber conf)       = getAndSaveMenuNet
-  | (not (clobber conf)) = getAndSaveMenuMaybeDisk
+getMenuFromFileOrNet conf
+  | (clobber conf)       = getAndSaveMenuFromNet
+  | (not (clobber conf)) = getMenuMaybeFromFile
 
-readFileU8 path = 
-  openFile path ReadMode
-  >>= \h -> hSetEncoding h char8
-  >> hGetContents h
-
-getAndSaveMenuDisk path =
+getMenuFromFile path =
   readFileU8 path 
   >>= return . parseMenu . C.pack
 
 -- If file exists on disk, read it instead of accessing network
-getAndSaveMenuMaybeDisk :: GopherUrl -> IO [MenuLine]
-getAndSaveMenuMaybeDisk url = do
+getMenuMaybeFromFile :: GopherUrl -> IO [MenuLine]
+getMenuMaybeFromFile url = do
   pathExists <- doesPathExist path
   if pathExists 
-    then getAndSaveMenuDisk path
-    else getAndSaveMenuNet url
+    then getMenuFromFile path
+    else getAndSaveMenuFromNet url
   where
     path = urlToFilePath url
 
@@ -376,7 +372,7 @@ crawlStatus conf depth refUrl =
 crawlMenu :: GopherUrl -> Config -> Int -> Set.Set GopherUrl -> IO [GopherUrl]
 crawlMenu refUrl conf depth history =
   putStrLn (crawlStatus conf depth refUrl) >>
-  getMenuFromDiskOrNet conf refUrl
+  getMenuFromFileOrNet conf refUrl
   >>= return . filter (notInSet history) . map mlToUrl -- Convert lines to urls 
   >>= filterM (goodMenuUrl conf refUrl)                -- Filter urls by config 
   >>= \remotes ->
@@ -395,10 +391,10 @@ getRemotes conf depth history url =
         nextRemotes = if atMaxDepth then return [] else getNextRemotes
         getNextRemotes = crawlMenu url conf (depth - 1) history
 
-getAndSaveFilePrintStatus :: GopherUrl -> IO ()
-getAndSaveFilePrintStatus url =
+getAndSaveToFilePrintStatus :: GopherUrl -> IO ()
+getAndSaveToFilePrintStatus url =
   putStrFl ("(file) " ++ (urlToString url) ++ " ") >>
-  getAndSaveFile url >>= \bs -> 
+  getAndSaveToFile url >>= \bs -> 
   putStrLnFl ("(" ++ (show ((C.length bs) `div` 1000)) ++ "k)")
 
 -- Get Argv, turn it into a Config
@@ -429,9 +425,9 @@ main'' conf url
     >>= getAndSaveUrls
   | otherwise =
     putStrLn ":: Downloading single file" >>
-    mapM_ getAndSaveFilePrintStatus [url]
+    mapM_ getAndSaveToFilePrintStatus [url]
 
 getAndSaveUrls :: [GopherUrl]-> IO ()
 getAndSaveUrls fileUrls = 
   putStrLn (":: Downloading " ++ (show (length fileUrls)) ++ " files ") >>
-  mapM_ getAndSaveFilePrintStatus fileUrls
+  mapM_ getAndSaveToFilePrintStatus fileUrls
