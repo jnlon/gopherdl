@@ -52,7 +52,7 @@ data Flag =
     | ConstrainPath
     | RejectRegex String
     | AcceptRegex String
-    | Delay Float
+    | Delay String
       deriving (Eq, Show, Ord)
 
 data Config = Config
@@ -214,6 +214,7 @@ optionSpec =
   , Option "c" [] (NoArg Clobber) "Enable file clobbering (overwrite existing)"
   , Option "m" [] (NoArg OnlyMenus) "Only download gopher menus"
   , Option "p" [] (NoArg ConstrainPath) "Only descend into child directories"
+  , Option "D" [] (ReqArg Delay "secs") "Delay before each download"
   , Option "R" [] (ReqArg RejectRegex "pcre") "Reject URL based on pcre" 
   , Option "A" [] (ReqArg AcceptRegex "pcre") "Accept URL based on pcre" ]
 
@@ -228,6 +229,9 @@ isAcceptRegex otherwise = False
 
 isDelay (Delay _) = True
 isDelay otherwise = False
+
+toFloat :: String -> Float
+toFloat s = (read s) :: Float
 
 configFromGetOpt :: ([Flag], [String], [String]) -> ([String], Config)
 configFromGetOpt (options, arguments, errors) = 
@@ -253,7 +257,7 @@ configFromGetOpt (options, arguments, errors) =
     getStringOr _default (Just (RejectRegex s)) = s
     getStringOr _default _ = _default
 
-    getFloatOr _default (Just (Delay f)) = f
+    getFloatOr _default (Just (Delay f)) = toFloat f
     getFloatOr _default _ = _default
 
 parseWithGetOpt :: [String] -> ([Flag], [String], [String])
