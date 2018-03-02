@@ -24,7 +24,8 @@ import Network.Socket (Socket, AddrInfo, addrSocketType, addrAddress,
 
 {- TODO
   - Implement -w
-  - compile time debug switch from build tool (stack?) -}
+  - compile time debug switch from build tool (stack?) 
+-}
 
 -- type text \t path \t host \t port \r\n
 type MenuLine = (Char, ByteString, ByteString, ByteString, ByteString)
@@ -50,7 +51,9 @@ data Flag =
     | NoMenus
     | ConstrainPath
     | RejectRegex String
-    | AcceptRegex String deriving (Eq, Show, Ord)
+    | AcceptRegex String
+    | Delay Float
+      deriving (Eq, Show, Ord)
 
 data Config = Config
  {  recursive :: Bool
@@ -61,7 +64,8 @@ data Config = Config
   , onlyMenus :: Bool
   , constrainPath :: Bool
   , rejectRegex :: String
-  , acceptRegex :: String } deriving Show
+  , acceptRegex :: String
+  , delay :: Float } deriving Show
 
 {---------------------}
 {------ Helpers ------}
@@ -222,6 +226,9 @@ isRejectRegex otherwise = False
 isAcceptRegex (AcceptRegex _) = True
 isAcceptRegex otherwise = False
 
+isDelay (Delay _) = True
+isDelay otherwise = False
+
 configFromGetOpt :: ([Flag], [String], [String]) -> ([String], Config)
 configFromGetOpt (options, arguments, errors) = 
   ( arguments, 
@@ -233,7 +240,8 @@ configFromGetOpt (options, arguments, errors) =
            , onlyMenus = has OnlyMenus
            , constrainPath = has ConstrainPath
            , rejectRegex = maybeGetOpt isRejectRegex (getStringOr "") 
-           , acceptRegex = maybeGetOpt isAcceptRegex (getStringOr "") })
+           , acceptRegex = maybeGetOpt isAcceptRegex (getStringOr "")
+           , delay = maybeGetOpt isDelay (getFloatOr 0.0) })
   where 
     has opt = opt `elem` options 
     maybeGetOpt finder getter = getter (find finder options)
@@ -244,6 +252,9 @@ configFromGetOpt (options, arguments, errors) =
     getStringOr _default (Just (AcceptRegex s)) = s
     getStringOr _default (Just (RejectRegex s)) = s
     getStringOr _default _ = _default
+
+    getFloatOr _default (Just (Delay f)) = f
+    getFloatOr _default _ = _default
 
 parseWithGetOpt :: [String] -> ([Flag], [String], [String])
 parseWithGetOpt argv = getOpt RequireOrder optionSpec argv
