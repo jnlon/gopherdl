@@ -8,6 +8,7 @@ import Network.URI (URI, URIAuth, parseURI, uriAuthority,
                     uriPath, uriRegName, uriPort)
 import Control.Exception
 import Control.Monad
+import Control.Concurrent (threadDelay)
 import System.IO
 import System.Directory (createDirectoryIfMissing, doesPathExist)
 import Data.ByteString (hPut)
@@ -23,7 +24,7 @@ import Network.Socket (Socket, AddrInfo, addrSocketType, addrAddress,
                        getAddrInfo, Family(AF_INET), socket)
 
 {- TODO
-  - Implement -w
+  - More debugging statements?
   - compile time debug switch from build tool (stack?) 
 -}
 
@@ -233,6 +234,9 @@ isDelay otherwise = False
 toFloat :: String -> Float
 toFloat s = (read s) :: Float
 
+secsToUSecs :: Float -> Int
+secsToUSecs secs = round $ secs * 1000000
+
 configFromGetOpt :: ([Flag], [String], [String]) -> ([String], Config)
 configFromGetOpt (options, arguments, errors) = 
   ( arguments, 
@@ -387,6 +391,7 @@ crawlStatus conf depth refUrl =
 crawlMenu :: GopherUrl -> Config -> Int -> Set.Set GopherUrl -> IO [GopherUrl]
 crawlMenu refUrl conf depth history =
   putStrLn (crawlStatus conf depth refUrl) >>
+  threadDelay (secsToUSecs (delay conf)) >>
   getMenuFromFileOrNet conf refUrl
   >>= return . filter (notInSet history) . map mlToUrl -- Convert lines to urls 
   >>= filterM (goodMenuUrl conf refUrl)                -- Filter urls by config 
@@ -406,8 +411,9 @@ getRemotes conf depth history url =
         nextRemotes = if atMaxDepth then return [] else getNextRemotes
         getNextRemotes = crawlMenu url conf (depth - 1) history
 
-getAndSaveToFilePrintStatus :: GopherUrl -> IO ()
-getAndSaveToFilePrintStatus url =
+getAndSaveToFilePrintStatus :: Float -> GopherUrl -> IO ()
+getAndSaveToFilePrintStatus delay url =
+  threadDelay (secsToUSecs delay) >>
   putStrFl ("(file) " ++ (urlToString url) ++ " ") >>
   getAndSaveToFile url >>= \bs -> 
   putStrLnFl ("(" ++ (show ((C.length bs) `div` 1000)) ++ "k)")
@@ -437,12 +443,12 @@ main'' conf url
     getRecursively url conf
     >>= return . filter isFileUrl
     >>= filterM (goodFileUrl conf)
-    >>= getAndSaveUrls
+    >>= getAndSaveUrls (delay conf)
   | otherwise =
     putStrLn ":: Downloading single file" >>
-    mapM_ getAndSaveToFilePrintStatus [url]
+    mapM_ (getAndSaveToFilePrintStatus 0.0) [url]
 
-getAndSaveUrls :: [GopherUrl]-> IO ()
-getAndSaveUrls fileUrls = 
+getAndSaveUrls :: Float -> [GopherUrl]-> IO ()
+getAndSaveUrls delay fileUrls = 
   putStrLn (":: Downloading " ++ (show (length fileUrls)) ++ " files ") >>
-  mapM_ getAndSaveToFilePrintStatus fileUrls
+  mapM_ (getAndSaveToFilePrintStatus delay) fileUrls
